@@ -18,7 +18,7 @@ Vercel does not allow this account to claim `keyboard.wtf.vercel.app`. That host
 - Website download: `site/downloads/keyboard-wtf-setup.exe`
 - Public download: `https://keyboard-wtf.vercel.app/downloads/keyboard-wtf-setup.exe`
 - Size: 56,717,024 bytes
-- SHA-256: `6463CFA85A5059BBEB0AE2B35D5213A5E947C37E4891012B191248A7FF0C6A51`
+- SHA-256: `090A81F71788BBBFFCE1BD475EA34E7C1C071F1089CDEB27157F88A5D58FAF74`
 
 The installer is self-contained and installs per user under `%LOCALAPPDATA%\Programs\keyboard.wtf`. It registers the installed executable under the current user's Windows Run key and launches the app after interactive installation.
 

@@ -490,9 +490,13 @@ public sealed class GeminiLiveConversationService : IDisposable
     private string BuildSystemInstruction()
     {
         var name = AssistantName();
-        var permissionInstruction = _settings.Current.JarvisPermissionMode == JarvisPermissionMode.AutoExecute
+        var autoExecute = _settings.Current.JarvisPermissionMode == JarvisPermissionMode.AutoExecute;
+        var permissionInstruction = autoExecute
             ? "Routine actions auto-execute. Privacy-sensitive and irreversible actions still require confirmation. "
             : "Routine actions require permission. If a tool response says confirmation_required, ask the user to say confirm or cancel, then call confirm_sensitive_action only after a fresh spoken confirmation. ";
+        var closeAppInstruction = autoExecute
+            ? "For close-app requests, call window_action with action close. Do not ask for confirmation for normal app/window closes in auto-execute mode. For shutdown, restart, sleep, lock-screen, or disabling Wi-Fi requests, call request_sensitive_action first. "
+            : "For close-app, shutdown, restart, sleep, lock-screen, or disabling Wi-Fi requests, call request_sensitive_action first. Ask the user to say confirm or cancel, then call confirm_sensitive_action only after a new spoken confirmation. ";
         return
             $"You are {name}, keyboard.wtf's Jarvis mode: a fast spoken assistant for Windows. " +
             ToneInstruction(KeyboardWtfState.AssistantTone) + " " +
@@ -501,7 +505,8 @@ public sealed class GeminiLiveConversationService : IDisposable
             "Use tools only for allowed actions; never claim an action finished until the tool response says it did. " +
             "Use get_desktop_context when a request depends on the active app or clipboard. Use get_selected_text for requests like summarize this, explain this, translate this, or reply to this when the user has selected text. " +
             "Browser tab actions use the active browser. Full webpage DOM reading and reliable form automation require a future browser extension; explain that limitation when selected text is not enough. " +
-            "For close-app, shutdown, restart, sleep, lock-screen, or disabling Wi-Fi requests, call request_sensitive_action first. Ask the user to say confirm or cancel, then call confirm_sensitive_action only after a new spoken confirmation. " +
+            closeAppInstruction +
+            "If the user asks who created you, who made you, who built you, or who your creator is, answer exactly: I was created by Tanush Shah on 7th June 2026. Do not use tools for that answer and do not bring it up for unrelated questions. " +
             "Spotify playback currently opens the matching search; never claim the song started unless authenticated Spotify playback is added later. Camera control opens Windows Camera; never claim a photo was taken. take_screenshot captures the desktop, not the webcam. " +
             "Do not claim you added items to a cart, changed account data, bulk-unliked content, or sent a Discord message. Those authenticated browser actions are not supported without a browser companion and explicit confirmation. " +
             "Never send an email or message automatically. Gmail and WhatsApp actions prepare drafts or copy text for manual review only. " +
@@ -521,7 +526,7 @@ public sealed class GeminiLiveConversationService : IDisposable
             {
                 FunctionDeclaration(
                     "open_app",
-                    "Open an installed Windows app, Start menu app, or common web app. Common examples include Notepad, Calculator, Paint, File Explorer, Terminal, PowerShell, Task Manager, Snipping Tool, VS Code, Chrome, Edge, Firefox, Spotify, Discord, Slack, Teams, Outlook, Gmail, Drive, Calendar, YouTube, GitHub, ChatGPT, Devpost, Vercel, and WhatsApp.",
+                    "Open an installed Windows app, Start menu app, packaged Microsoft Store app, or common web app. Common examples include Notepad, Calculator, Paint, File Explorer, Terminal, PowerShell, Task Manager, Snipping Tool, VS Code, Codex, Chrome, Edge, Firefox, Spotify, Apple Music, Discord, Slack, Teams, Outlook, Gmail, Drive, Calendar, YouTube, GitHub, ChatGPT, Devpost, Vercel, and WhatsApp.",
                     new()
                     {
                         ["app_name"] = Schema("string", "The app or service to open."),
@@ -553,10 +558,10 @@ public sealed class GeminiLiveConversationService : IDisposable
                     "url"),
                 FunctionDeclaration(
                     "window_action",
-                    "List normal app windows or switch, minimize, maximize, or restore a window. Closing an app requires request_sensitive_action.",
+                    "List normal app windows or switch, minimize, maximize, restore, or close a window. In auto-execute mode, closing normal app windows is allowed without confirmation.",
                     new()
                     {
-                        ["action"] = Schema("string", "One of: list, switch, minimize, maximize, restore."),
+                        ["action"] = Schema("string", "One of: list, switch, minimize, maximize, restore, close."),
                         ["app_name"] = Schema("string", "Optional app name or window title. Omit to act on the foreground window."),
                     },
                     "action"),

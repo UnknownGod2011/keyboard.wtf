@@ -282,6 +282,21 @@ public sealed class JarvisAutomationService : IDisposable
             _openSettings();
             return Logged("open_app", "keyboard.wtf settings", true, "Opened keyboard.wtf settings.");
         }
+        if (name is "codex" or "openai codex")
+        {
+            if (TryStartStartApp("Codex", "OpenAI Codex"))
+                return Logged("open_app", name, true, "Opened Codex.");
+        }
+        if (name is "apple music")
+        {
+            if (TryStartStartApp("Apple Music")
+                || TryStart("iTunes.exe"))
+                return Logged("open_app", name, true, "Opened Apple Music.");
+
+            var result = OpenUrl("https://music.apple.com/");
+            result["message"] = "Apple Music is not installed here, so I opened Apple Music on the web.";
+            return result;
+        }
         if (name is "camera" or "windows camera")
             return OpenCamera();
         if (name is "photos" or "microsoft photos")
@@ -315,6 +330,7 @@ public sealed class JarvisAutomationService : IDisposable
             "edge" or "microsoft edge" => new[] { "msedge.exe" },
             "firefox" => new[] { "firefox.exe" },
             "spotify" => new[] { "spotify.exe" },
+            "media player" or "windows media player" or "music" => new[] { "wmplayer.exe" },
             "discord" => new[] { "discord.exe" },
             "slack" => new[] { "slack.exe" },
             "teams" or "microsoft teams" => new[] { "ms-teams.exe", "teams.exe" },
@@ -331,6 +347,9 @@ public sealed class JarvisAutomationService : IDisposable
         var shortcut = FindStartMenuShortcut(name);
         if (!string.IsNullOrWhiteSpace(shortcut) && TryStart(shortcut))
             return Logged("open_app", shortcut, true, $"Opened {Path.GetFileNameWithoutExtension(shortcut)}.");
+
+        if (TryStartStartApp(appName))
+            return Logged("open_app", name, true, $"Opened {appName}.");
 
         return Logged(
             "open_app",
@@ -412,8 +431,17 @@ public sealed class JarvisAutomationService : IDisposable
             case "restore":
                 ShowWindow(handle, SwRestore);
                 return Logged("window_action", $"restore {appName}", true, "Window restored.");
+            case "close":
+            case "quit":
+            case "exit":
+                var title = GetWindowTitle(handle);
+                var label = string.IsNullOrWhiteSpace(title)
+                    ? string.IsNullOrWhiteSpace(appName) ? "the active window" : appName
+                    : Limit(title, 80);
+                PostMessage(handle, WmClose, IntPtr.Zero, IntPtr.Zero);
+                return Logged("window_action", $"close {label}", true, $"Closed {label}.");
             default:
-                return Result(false, "Supported window actions are list, switch, minimize, maximize, and restore.", supported: false);
+                return Result(false, "Supported window actions are list, switch, minimize, maximize, restore, and close.", supported: false);
         }
     }
 
@@ -988,6 +1016,14 @@ public sealed class JarvisAutomationService : IDisposable
         if (normalized == "close app" && string.IsNullOrWhiteSpace(target))
             return Result(false, "Which app should I close?", needsClarification: true);
 
+        if (_settings.Current.JarvisPermissionMode == JarvisPermissionMode.AutoExecute
+            && normalized is "close active app" or "close app")
+        {
+            var result = WindowAction("close", normalized == "close app" ? target : "");
+            result["auto_executed"] = true;
+            return result;
+        }
+
         var description = normalized switch
         {
             "close active app" => "Close the currently active app",
@@ -1239,6 +1275,40 @@ public sealed class JarvisAutomationService : IDisposable
         catch { return false; }
     }
 
+    private static bool TryStartPackagedApp(params string[] appIds)
+    {
+        foreach (var appId in appIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+        {
+            try
+            {
+                var info = new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                info.ArgumentList.Add($@"shell:AppsFolder\{appId}");
+                Process.Start(info);
+                return true;
+            }
+            catch { }
+        }
+
+        return false;
+    }
+
+    private static bool TryStartStartApp(params string[] names)
+    {
+        foreach (var name in names.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            var appId = FindStartAppId(name);
+            if (!string.IsNullOrWhiteSpace(appId) && TryStartPackagedApp(appId))
+                return true;
+        }
+
+        return false;
+    }
+
     private static string FindStartMenuShortcut(string name)
     {
         var roots = new[]
@@ -1259,6 +1329,53 @@ public sealed class JarvisAutomationService : IDisposable
             catch { }
         }
         return null;
+    }
+
+    private static string FindStartAppId(string name)
+    {
+        try
+        {
+            var info = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            info.ArgumentList.Add("-NoProfile");
+            info.ArgumentList.Add("-ExecutionPolicy");
+            info.ArgumentList.Add("Bypass");
+            info.ArgumentList.Add("-Command");
+            info.ArgumentList.Add(BuildStartAppLookupCommand(name));
+
+            using var process = Process.Start(info);
+            if (process == null)
+                return null;
+            if (!process.WaitForExit(3500))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return null;
+            }
+
+            return process.StandardOutput.ReadToEnd().Trim();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string BuildStartAppLookupCommand(string name)
+    {
+        var safe = (name ?? "").Replace("'", "''");
+        return
+            "$needle = '" + safe + "'; " +
+            "$exact = Get-StartApps | Where-Object { $_.Name -eq $needle } | Select-Object -First 1 -ExpandProperty AppID; " +
+            "if ($exact) { $exact; exit } " +
+            "$contains = Get-StartApps | Where-Object { $_.Name -like ('*' + $needle + '*') -or $needle -like ('*' + $_.Name + '*') } | Select-Object -First 1 -ExpandProperty AppID; " +
+            "if ($contains) { $contains }";
+
     }
 
     private static string ExpandPath(string path)
