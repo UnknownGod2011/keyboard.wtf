@@ -4,7 +4,7 @@
 
 - Public URL: `https://keyboard-wtf.vercel.app`
 - Vercel project: `site`
-- Production deployment: `site-7pb5epr7y-tanush-shahs-projects-5e868e6e.vercel.app`
+- Production deployment: `site-5fyb3tgdm-tanush-shahs-projects-5e868e6e.vercel.app`
 - Site directory: `site`
 - Framework: static HTML
 - Deployment Protection: disabled for this public download project
@@ -17,7 +17,7 @@ Vercel does not allow this account to claim `keyboard.wtf.vercel.app`. That host
 - Inno Setup definition: `installer/keyboard-wtf.iss`
 - Website download: `site/downloads/keyboard-wtf-setup.exe`
 - Public download: `https://keyboard-wtf.vercel.app/downloads/keyboard-wtf-setup.exe`
-- Size: 56,717,024 bytes
+- Size: 56,714,119 bytes
 - SHA-256: `090A81F71788BBBFFCE1BD475EA34E7C1C071F1089CDEB27157F88A5D58FAF74`
 
 The installer is self-contained and installs per user under `%LOCALAPPDATA%\Programs\keyboard.wtf`. It registers the installed executable under the current user's Windows Run key and launches the app after interactive installation.

@@ -176,6 +176,11 @@ Build the self-contained Windows installer:
 The installer is per-user, registers keyboard.wtf to start after sign-in, and launches
 the local setup page when a Gemini API key has not been configured.
 
+## License
+
+keyboard.wtf is released under the MIT License. Copyright (c) 2026 Tanush Shah.
+See [LICENSE](LICENSE).
+
 ## Demo Script
 
 1. Launch keyboard.wtf.
