@@ -25,16 +25,22 @@ The keyboard becomes the trigger, not the main input method.
 - Selectable Gemini Live voices in Settings. Jarvis speech comes directly from Gemini; offline Read Back remains on Piper with Windows SAPI fallback.
 - Local intent memory with a 20-entry cap, saved only when the user explicitly asks, and manageable from settings.
 - Custom assistant name, voice, and four tone options in settings.
-- Open common apps and Start menu apps, switch/minimize/maximize windows, and open known folders or safe local documents.
+- Resolve approximate or misspelled app names from Windows Start Apps, Start Menu shortcuts, registered App Paths, and trusted application locations. Low-confidence matches are presented for selection instead of guessed.
+- Fuzzy-search safe files and folders under Desktop, Downloads, Documents, Pictures, Videos, Music, OneDrive, and user-approved learned folders with bounded depth, result count, scan count, timeout, and cancellation.
+- Save user-approved local aliases for apps, files, folders, links, workflows, and browser preference. Learned mappings are bounded to 80 entries and can be removed in Settings.
+- Open links and web searches in Chrome, Edge, Brave, Firefox, Opera, Vivaldi, or Arc when that installed browser is explicitly requested. Jarvis does not silently substitute a different browser.
+- Inspect one user-approved screen capture in memory with Gemini vision and return text guidance. The capture is not written to disk and Jarvis does not click or type automatically.
+- Create, switch, and close Windows virtual desktops through allowlisted Windows shortcuts. Closing a desktop always requires confirmation.
+- Open common apps, switch/minimize/maximize windows, and open known folders or safe local documents.
 - Control active Chrome, Edge, Firefox, Brave, Opera, Vivaldi, or Arc tabs: new, close, switch, reopen, refresh, back, forward, downloads, history, and find.
 - Use active-window, selected-text, and clipboard context for requests such as "summarize this," "explain this," or "make this professional."
 - Search file and folder names, save notes, manage a local to-do list, and set in-app timers.
 - Create reusable workflows from app names, safe URLs, and folders. Coding, study, and hackathon modes are included.
 - Change volume or mute directly, and open Wi-Fi, Bluetooth, display, and sound settings.
 - Open Spotify or YouTube searches, Spotify Liked Songs, YouTube Liked Videos/Subscriptions/History, Amazon product searches, and Discord home.
-- Open Windows Camera with a privacy confirmation, or save a desktop screenshot under `Pictures\keyboard.wtf\Screenshots`.
+- Open Windows Camera with a privacy confirmation, or save a desktop screenshot under `Pictures\keyboard.wtf\Screenshots`. Automatic webcam shutter capture is not enabled; photo requests open Camera for a manual shutter press.
 - Read battery, charging, Windows, machine, user, and uptime status.
-- Sensitive actions use a two-turn local confirmation gate: close app, shutdown, restart, sleep, lock screen, and disable Wi-Fi.
+- Sensitive actions use a two-turn local confirmation gate. Shutdown, restart, sleep, lock screen, and disable Wi-Fi are always gated; normal app closing is also gated in Ask mode.
 - Local action history is capped at 50 entries, and Settings includes an emergency Stop Jarvis button.
 - Gemini, Claude, and OpenAI providers implemented; DeepSeek and Perplexity are present as provider placeholders.
 - Destinations: clipboard, type out, email, Slack, Discord, Teams, calendar, WhatsApp, Notion, Telegram.
@@ -58,6 +64,7 @@ The keyboard becomes the trigger, not the main input method.
 Recording modes stop automatically after speech followed by a short pause. Press the same mode shortcut again to stop and submit manually. Press `Ctrl+Alt+X` to discard the current operation.
 
 If Windows reports that a shortcut is already in use, keyboard.wtf keeps running and shows a warning so the shortcut can be changed in settings.
+If another app owns the configured Jarvis or Cancel shortcut, keyboard.wtf uses `Ctrl+Alt+J` for Jarvis and `Ctrl+Alt+Escape` for Cancel as conflict-only fallbacks. Settings shows which shortcuts are active. `Ctrl+Alt+Space` is not used.
 
 ## How It Works
 
@@ -77,7 +84,8 @@ Read Back is separate: it uses local Piper voices and falls back to Windows SAPI
 ## Jarvis Safety Boundaries
 
 - Jarvis never sends an email or WhatsApp message automatically. It prepares content for review.
-- Auto-execute removes repetitive prompts only for routine actions. Camera access, screenshots, app closing, lock, sleep, restart, shutdown, and disabling Wi-Fi still require a fresh confirmation.
+- Auto-execute removes repetitive prompts only for routine actions. Normal window closing remains immediate in Auto-execute mode. Camera access, screen inspection, screenshots, virtual-desktop closing, lock, sleep, restart, shutdown, and disabling Wi-Fi still require a fresh confirmation.
+- Screen guidance is one-shot and user-triggered. The approved image is analyzed in memory and is not saved; there is no continuous screen watching.
 - Generic path opening blocks executables, scripts, installers, shortcuts, and registry files.
 - Browser tab commands run only while a supported browser is the foreground app.
 - Selected-text tools restore the previous clipboard after use.
@@ -90,9 +98,9 @@ Read Back is separate: it uses local Piper voices and falls back to Windows SAPI
 
 For normal users:
 
-1. Download the Windows package from `https://keyboard-wtf.vercel.app`.
-2. Extract the zip.
-3. Run `keyboard.wtf.exe`.
+1. Download the Windows installer from `https://keyboard-wtf.vercel.app`.
+2. Run `keyboard-wtf-setup.exe`.
+3. Launch `keyboard.wtf` if the installer did not start it automatically.
 4. Open settings from the tray icon or press `Ctrl+Alt+,`.
 5. Allow microphone access, confirm shortcuts, and choose the Jarvis permission mode.
 
@@ -192,8 +200,8 @@ See [LICENSE](LICENSE).
 7. Show Gmail opened with the recipient, `Apology for Being Late` subject, and polished body already filled. Explain that the user reviews and clicks Send.
 8. Say: "Remember that I prefer concise replies," then show the bounded local memory in Settings.
 9. Say: "Start coding mode," or create a custom workflow in Settings and run it by name.
-10. Ask Jarvis to close Notepad. Show the confirmation preview, say "confirm," and show the action history.
-11. Say: "Open my liked videos on YouTube," then: "Play Whistle by Flo Rida on Spotify." Show the exact Spotify search or direct playback when an eligible Spotify session is available.
+10. In Ask mode, ask Jarvis to close Notepad. Show the confirmation preview, say "confirm," and show the action history.
+11. Say: "Open my liked videos on YouTube," then: "Play Whistle by Flo Rida on Spotify." Show the exact Spotify search and select the result manually.
 12. Say: "Take a screenshot." Confirm the privacy prompt and show the saved PNG in Pictures.
 13. Say "bye" to auto-end, or press `Ctrl+Alt+X` at any point for an emergency stop.
 
@@ -211,9 +219,9 @@ See [LICENSE](LICENSE).
 10. Use the Gmail draft sentence from the demo and confirm the compose fields are filled but not sent.
 11. Ask Jarvis to remember one short preference, then confirm it appears under Settings -> Assistant -> Intent memory.
 12. Create a workflow in Settings, run it by name, and confirm it appears in local action history.
-13. Ask Jarvis to close Notepad. It must refuse to act until you answer with a fresh "confirm."
+13. In Ask mode, ask Jarvis to close Notepad. It must refuse to act until you answer with a fresh "confirm." In Auto-execute mode, normal window closing is immediate.
 14. Enable Start with Windows and confirm Settings reports the startup registration as active.
-15. Switch Jarvis action permissions between Ask and Auto-execute. Camera and screenshot must still ask in both modes.
+15. Switch Jarvis action permissions between Ask and Auto-execute. Camera, screen inspection, screenshots, and virtual-desktop closing must still ask in both modes.
 16. Ask for YouTube Liked Videos, Spotify Liked Songs, and an Amazon product search.
 17. Start any mode and press `Ctrl+Alt+X`; the orb should say Cancelled and disappear after about three seconds.
 

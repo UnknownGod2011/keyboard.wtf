@@ -153,6 +153,16 @@
       background: #2b2e2a;
     }
 
+    .button.secondary {
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .button.secondary:hover {
+      background: #e8eae5;
+    }
+
     .release {
       color: var(--muted);
       font-size: 13px;
@@ -398,7 +408,8 @@
         <p class="lead">Dictate anywhere, polish rough speech, and ask Jarvis to take useful action across your PC.</p>
         <div class="actions">
           <a class="button" href="/downloads/keyboard-wtf-setup.exe" download>Download for Windows</a>
-          <span class="release">Version 1.0 beta / Windows 10 and 11 x64 / 54.1 MB</span>
+          <button class="button secondary" type="button" onclick="showMacComingSoon()">Download for macOS</button>
+          <span class="release">Version 1.1 beta / Windows 10 and 11 x64</span>
         </div>
         <div class="trust-line">
           <span>Local speech models</span>
@@ -487,7 +498,7 @@
           <div class="detail">
             <h3>Beta signing</h3>
             <p>This beta installer is not yet code-signed, so Windows may identify it as an unknown publisher. Download it only from this page.</p>
-            <code class="hash">SHA256 090A81F71788BBBFFCE1BD475EA34E7C1C071F1089CDEB27157F88A5D58FAF74</code>
+            <code class="hash">SHA256 AC6120D777E4C1350EE43C6EBDC1B8117666F78FB04A1498E1C20A79815CB6C0</code>
           </div>
         </div>
       </div>
@@ -503,5 +514,10 @@
       </div>
     </div>
   </footer>
+  <script>
+    function showMacComingSoon() {
+      window.alert('keyboard.wtf for macOS is coming soon.');
+    }
+  </script>
 </body>
 </html>

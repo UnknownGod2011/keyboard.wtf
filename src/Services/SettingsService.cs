@@ -80,6 +80,7 @@ public sealed class AppSettings
     public List<JarvisWorkflowSettings> JarvisWorkflows { get; set; } = new();
     public bool StartWithWindows { get; set; } = true;
     public JarvisPermissionMode JarvisPermissionMode { get; set; } = JarvisPermissionMode.AlwaysAsk;
+    public string PreferredBrowser { get; set; } = "";
 }
 
 public sealed class SettingsService
@@ -246,6 +247,11 @@ public sealed class SettingsService
     public void SaveGeminiVoice(string value) { Current.GeminiVoice = SanitizeGeminiVoice(value); KeyboardWtfState.GeminiVoice = Current.GeminiVoice; Save(); }
     public void SaveStartWithWindows(bool value) { Current.StartWithWindows = value; Save(); }
     public void SaveJarvisPermissionMode(JarvisPermissionMode value) { Current.JarvisPermissionMode = value; Save(); }
+    public void SavePreferredBrowser(string value)
+    {
+        Current.PreferredBrowser = BrowserLauncherService.NormalizeBrowser(value);
+        Save();
+    }
 
     public JarvisWorkflowSettings SaveWorkflow(string name, string apps, string urls, string folder)
     {

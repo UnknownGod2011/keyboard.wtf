@@ -1,5 +1,5 @@
 #define MyAppName "keyboard.wtf"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "keyboard.wtf"
 #define MyAppExeName "keyboard.wtf.exe"
 

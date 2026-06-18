@@ -5,6 +5,8 @@ VisualStudioVersion = 17.8.34408.163
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeyboardWtf", "src\KeyboardWtf.csproj", "{093948F7-9011-4610-BEE1-02199E347D67}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeyboardWtf.Tests", "tests\KeyboardWtf.Tests\KeyboardWtf.Tests.csproj", "{46E3EB8D-67C4-4CA9-97A8-2A45D13B1BB1}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{BD08438B-1C4A-4FFA-A856-D5285D570BB8}"
 	ProjectSection(SolutionItems) = preProject
 		.vscode\launch.json = .vscode\launch.json
@@ -21,6 +23,10 @@ Global
 		{093948F7-9011-4610-BEE1-02199E347D67}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{093948F7-9011-4610-BEE1-02199E347D67}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{093948F7-9011-4610-BEE1-02199E347D67}.Release|Any CPU.Build.0 = Release|Any CPU
+		{46E3EB8D-67C4-4CA9-97A8-2A45D13B1BB1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{46E3EB8D-67C4-4CA9-97A8-2A45D13B1BB1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{46E3EB8D-67C4-4CA9-97A8-2A45D13B1BB1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{46E3EB8D-67C4-4CA9-97A8-2A45D13B1BB1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -27,6 +27,7 @@ public sealed class WebSettingsService : IDisposable
     private HotkeyService _hotkeys;
     private IntentMemoryService _intentMemory;
     private JarvisActionHistoryService _jarvisHistory;
+    private LearnedMappingService _learnedMappings;
     private string _settingsHtml;
 
     // Live microphone meter state
@@ -59,13 +60,15 @@ public sealed class WebSettingsService : IDisposable
         SettingsService settings,
         HotkeyService hotkeys,
         IntentMemoryService intentMemory,
-        JarvisActionHistoryService jarvisHistory)
+        JarvisActionHistoryService jarvisHistory,
+        LearnedMappingService learnedMappings)
     {
         _app = app;
         _settings = settings;
         _hotkeys = hotkeys;
         _intentMemory = intentMemory;
         _jarvisHistory = jarvisHistory;
+        _learnedMappings = learnedMappings;
         _settingsHtml = LoadSettingsHtml();
     }
 
@@ -182,6 +185,15 @@ public sealed class WebSettingsService : IDisposable
             {
                 _jarvisHistory?.Clear();
                 await WriteJson(resp, new { ok = true });
+            }
+            else if (path == "/api/learned-mappings/delete" && method == "POST")
+            {
+                await DeleteLearnedMapping(req, resp);
+            }
+            else if (path == "/api/learned-mappings/clear" && method == "POST")
+            {
+                var removed = _learnedMappings?.Clear() ?? 0;
+                await WriteJson(resp, new { ok = true, removed });
             }
             else if (path == "/api/jarvis-workflow/delete" && method == "POST")
             {
@@ -350,6 +362,8 @@ public sealed class WebSettingsService : IDisposable
             piperInstallStatus = KeyboardWtfState.PiperInstallStatus,
 
             hotkeys = _settings?.Current.Hotkeys ?? HotkeySettings.Defaults(),
+            activeHotkeys = _hotkeys?.ActiveRegistrations
+                ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             defaultDestination = _settings?.Current.DefaultDestination ?? "Clipboard",
             textDeliveryMode = (_settings?.Current.TextDeliveryMode ?? VoiceTextDeliveryMode.TypeIntoActiveApp).ToString(),
             assistantName = KeyboardWtfState.AssistantName,
@@ -364,7 +378,20 @@ public sealed class WebSettingsService : IDisposable
             intentMemory = _intentMemory?.Snapshot() ?? new IntentMemorySnapshot(),
             jarvisWorkflows = _settings?.Current.JarvisWorkflows ?? new List<JarvisWorkflowSettings>(),
             jarvisActionHistory = _jarvisHistory?.Snapshot() ?? Array.Empty<JarvisActionEntry>(),
-            pendingSensitiveAction = _app?.Commands?.PendingSensitiveAction
+            pendingSensitiveAction = _app?.Commands?.PendingSensitiveAction,
+            preferredBrowser = _settings?.Current.PreferredBrowser ?? "",
+            learnedMappings = _learnedMappings?.Snapshot() ?? Array.Empty<LearnedMappingEntry>(),
+            featureStatus = new
+            {
+                smartAppSearch = "Available",
+                smartFileSearch = "Available",
+                browserTargeting = "Available",
+                screenGuidance = string.IsNullOrWhiteSpace(KeyboardWtfState.GeminiApiKey)
+                    ? "Needs Gemini API key"
+                    : "Available with confirmation",
+                cameraCapture = "Manual shutter only",
+                virtualDesktops = "Available",
+            }
         };
 
         var json = JsonSerializer.Serialize(settings);
@@ -511,6 +538,8 @@ public sealed class WebSettingsService : IDisposable
         if (root.TryGetProperty("jarvisPermissionMode", out var permissionEl)
             && Enum.TryParse<JarvisPermissionMode>(permissionEl.GetString(), out var permissionMode))
             _settings?.SaveJarvisPermissionMode(permissionMode);
+        if (root.TryGetProperty("preferredBrowser", out var preferredBrowserEl))
+            _settings?.SavePreferredBrowser(preferredBrowserEl.GetString() ?? "");
 
         if (root.TryGetProperty("jarvisWorkflow", out var workflowEl))
         {
@@ -648,6 +677,26 @@ public sealed class WebSettingsService : IDisposable
                 removed,
                 error = removed ? null : "Workflow not found.",
             });
+        }
+        catch (Exception ex)
+        {
+            resp.StatusCode = 400;
+            await WriteJson(resp, new { ok = false, error = ex.Message });
+        }
+    }
+
+    private async Task DeleteLearnedMapping(HttpListenerRequest req, HttpListenerResponse resp)
+    {
+        try
+        {
+            using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
+            var body = await reader.ReadToEndAsync();
+            using var doc = JsonDocument.Parse(body);
+            var id = GetJsonString(doc.RootElement, "id");
+            var alias = GetJsonString(doc.RootElement, "alias");
+            var removed = _learnedMappings?.Forget(
+                string.IsNullOrWhiteSpace(id) ? alias : id) ?? false;
+            await WriteJson(resp, new { ok = removed, removed });
         }
         catch (Exception ex)
         {

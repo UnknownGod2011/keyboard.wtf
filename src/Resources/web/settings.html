@@ -637,6 +637,7 @@
       </div>
 
       <button class="ghost" onclick="resetHotkeys()">Reset hotkeys</button>
+      <div class="hint" id="activeHotkeyStatus">Active shortcuts are checked when keyboard.wtf starts.</div>
     </section>
 
     <!-- Assistant -->
@@ -680,7 +681,33 @@
           <option value="AlwaysAsk">Ask before routine actions</option>
           <option value="AutoExecute">Auto-execute routine actions</option>
         </select>
-        <div class="hint">Camera, screenshots, app closing, lock, sleep, restart, shutdown, and disabling Wi-Fi always require confirmation.</div>
+        <div class="hint">Camera, screen inspection, screenshots, virtual-desktop closing, lock, sleep, restart, shutdown, and disabling Wi-Fi always require confirmation. Normal window closing follows the selected permission mode.</div>
+      </div>
+
+      <div class="field">
+        <label for="preferredBrowser">Preferred browser</label>
+        <select id="preferredBrowser" onchange="assistantChanged()">
+          <option value="">Use Windows default</option>
+          <option value="chrome">Chrome</option>
+          <option value="edge">Edge</option>
+          <option value="brave">Brave</option>
+          <option value="firefox">Firefox</option>
+          <option value="opera">Opera</option>
+          <option value="vivaldi">Vivaldi</option>
+          <option value="arc">Arc</option>
+        </select>
+        <div class="hint">An explicitly spoken browser always takes priority. Jarvis never silently substitutes another browser.</div>
+      </div>
+
+      <div class="field">
+        <label>Windows capability status</label>
+        <div class="setup-grid" id="jarvisFeatureStatus">
+          <div class="setup-item"><div class="setup-label">Smart search</div><div class="setup-value" id="featureSmartSearch">Checking...</div></div>
+          <div class="setup-item"><div class="setup-label">Screen guidance</div><div class="setup-value" id="featureScreenGuidance">Checking...</div></div>
+          <div class="setup-item"><div class="setup-label">Camera</div><div class="setup-value" id="featureCamera">Checking...</div></div>
+          <div class="setup-item"><div class="setup-label">Virtual desktops</div><div class="setup-value" id="featureVirtualDesktops">Checking...</div></div>
+        </div>
+        <div class="hint">Screen inspection is one-shot, always asks first, and keeps the captured image in memory only. Camera opening is supported; automatic shutter capture remains disabled until a stable owned capture path ships.</div>
       </div>
 
       <div class="field">
@@ -689,7 +716,7 @@
           <button onclick="stopJarvis()">Stop Jarvis now</button>
           <span class="hint" id="pendingActionText" style="margin:0">No action pending.</span>
         </div>
-        <div class="hint">Closing apps, shutdown, restart, sleep, lock, and disabling Wi-Fi require a separate spoken confirmation.</div>
+        <div class="hint">In Ask mode, routine actions including window closing require confirmation. In Auto-execute mode, normal window closing is immediate; shutdown, restart, sleep, lock, Wi-Fi disable, camera, and screen inspection remain gated.</div>
       </div>
 
       <div class="field">
@@ -723,6 +750,17 @@
           <button class="ghost" onclick="clearIntentMemory()">Clear memory</button>
         </div>
         <div class="hint">Jarvis saves memory only when you explicitly ask it to remember something. Limit: 20 short entries.</div>
+      </div>
+
+      <div class="field">
+        <label>Learned mappings <span class="label-hint" id="mappingCount"></span></label>
+        <div class="memory-list" id="learnedMappingsList">
+          <div class="memory-empty">No learned app, file, folder, browser, or link mappings yet.</div>
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="ghost" onclick="clearLearnedMappings()">Clear learned mappings</button>
+        </div>
+        <div class="hint">Mappings are stored only under your local keyboard.wtf app data. Jarvis learns one only after you approve it.</div>
       </div>
 
       <div class="field">
@@ -868,7 +906,7 @@
     <!-- Voice Notes -->
     <section id="voice-notes">
       <h2>Voice Notes</h2>
-      <p class="section-hint">Raw audio saved to disk without transcription.</p>
+      <p class="section-hint">Choose where locally saved transcript notes and related voice files are kept.</p>
 
       <div class="field">
         <label for="voiceNoteSavePath">Save folder</label>
@@ -1132,6 +1170,7 @@ async function loadSettings() {
 
     selectEngineUI(settings.speechEngine);
     const hotkeys = settings.hotkeys || {};
+    renderActiveHotkeys(hotkeys, settings.activeHotkeys || {});
     document.getElementById('hotkeyPushToTalk').value = hotkeys.PushToTalk || hotkeys.pushToTalk || 'Ctrl+Alt+K';
     document.getElementById('hotkeyDictation').value = hotkeys.Dictation || hotkeys.dictation || 'Ctrl+Alt+D';
     document.getElementById('hotkeyJarvis').value = hotkeys.Jarvis || hotkeys.jarvis || hotkeys.QuickSend || hotkeys.quickSend || 'Ctrl+Alt+Q';
@@ -1144,12 +1183,15 @@ async function loadSettings() {
     renderGeminiVoices(settings.geminiVoices || [], settings.geminiVoice || 'Kore');
     document.getElementById('startWithWindows').checked = settings.startWithWindows !== false;
     document.getElementById('jarvisPermissionMode').value = settings.jarvisPermissionMode || 'AlwaysAsk';
+    document.getElementById('preferredBrowser').value = settings.preferredBrowser || '';
     renderStartupStatus(settings);
     renderSetupStatus(settings);
+    renderFeatureStatus(settings.featureStatus || {});
     renderJarvisWorkflows(settings.jarvisWorkflows || []);
     renderJarvisHistory(settings.jarvisActionHistory || []);
     renderPendingSensitiveAction(settings.pendingSensitiveAction);
     renderIntentMemory(settings.intentMemory || {});
+    renderLearnedMappings(settings.learnedMappings || []);
     document.getElementById('language').value = settings.language || 'auto';
     document.getElementById('whisperModelSize').value = settings.whisperModelSize || 'Small';
     applyMaxDuration(settings.maxRecordingSeconds || 30);
@@ -1340,6 +1382,67 @@ function renderIntentMemory(memory) {
     row.appendChild(btn);
     list.appendChild(row);
   });
+}
+
+function renderLearnedMappings(entries) {
+  const list = document.getElementById('learnedMappingsList');
+  document.getElementById('mappingCount').textContent = `${entries.length}/80`;
+  list.innerHTML = '';
+  if (!entries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'memory-empty';
+    empty.textContent = 'No learned app, file, folder, browser, or link mappings yet.';
+    list.appendChild(empty);
+    return;
+  }
+
+  entries.forEach(entry => {
+    const row = document.createElement('div');
+    row.className = 'memory-row';
+    const text = document.createElement('div');
+    const key = document.createElement('div');
+    key.className = 'memory-key';
+    const kind = entry.Kind || entry.kind || 'Mapping';
+    key.textContent = `${entry.Alias || entry.alias} · ${kind}`;
+    const value = document.createElement('div');
+    value.className = 'memory-value';
+    value.textContent = entry.DisplayName || entry.displayName || entry.Target || entry.target || '';
+    text.appendChild(key);
+    text.appendChild(value);
+    const button = document.createElement('button');
+    button.className = 'ghost';
+    button.textContent = 'Delete';
+    button.onclick = () => deleteLearnedMapping(entry.Id || entry.id);
+    row.appendChild(text);
+    row.appendChild(button);
+    list.appendChild(row);
+  });
+}
+
+function renderFeatureStatus(status) {
+  document.getElementById('featureSmartSearch').textContent =
+    status.smartAppSearch === 'Available' && status.smartFileSearch === 'Available'
+      ? 'Apps + files ready'
+      : 'Unavailable';
+  document.getElementById('featureScreenGuidance').textContent =
+    status.screenGuidance || 'Unavailable';
+  document.getElementById('featureCamera').textContent =
+    status.cameraCapture || 'Manual shutter only';
+  document.getElementById('featureVirtualDesktops').textContent =
+    status.virtualDesktops || 'Unavailable';
+}
+
+function renderActiveHotkeys(configured, active) {
+  const labels = [
+    ['Jarvis', configured.Jarvis || configured.jarvis, active.Jarvis || active.jarvis],
+    ['Cancel', configured.Cancel || configured.cancel, active.Cancel || active.cancel]
+  ];
+  const fallbacks = labels
+    .filter(item => item[1] && item[2] && item[1].toLowerCase() !== item[2].toLowerCase())
+    .map(item => `${item[0]} uses ${item[2]} because ${item[1]} is occupied`);
+  document.getElementById('activeHotkeyStatus').textContent = fallbacks.length
+    ? fallbacks.join('. ') + '.'
+    : 'Configured shortcuts are active.';
 }
 
 function renderGeminiVoices(voices, selectedVoice) {
@@ -1619,7 +1722,8 @@ async function assistantChanged() {
         assistantTone: document.getElementById('assistantTone').value,
         geminiVoice: document.getElementById('geminiVoice').value,
         startWithWindows: document.getElementById('startWithWindows').checked,
-        jarvisPermissionMode: document.getElementById('jarvisPermissionMode').value
+        jarvisPermissionMode: document.getElementById('jarvisPermissionMode').value,
+        preferredBrowser: document.getElementById('preferredBrowser').value
       })
     });
     showToast('Assistant saved');
@@ -1750,6 +1854,33 @@ async function clearIntentMemory() {
     loadSettings();
   } catch (e) {
     showToast('Clear failed');
+  }
+}
+
+async function deleteLearnedMapping(id) {
+  if (!id) return;
+  try {
+    const response = await fetch('/api/learned-mappings/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    const data = await response.json();
+    showToast(data.ok ? 'Mapping deleted' : 'Mapping not found');
+    loadSettings();
+  } catch (e) {
+    showToast('Mapping delete failed');
+  }
+}
+
+async function clearLearnedMappings() {
+  try {
+    const response = await fetch('/api/learned-mappings/clear', { method: 'POST' });
+    const data = await response.json();
+    showToast(`Cleared ${data.removed || 0} mappings`);
+    loadSettings();
+  } catch (e) {
+    showToast('Mapping clear failed');
   }
 }
 

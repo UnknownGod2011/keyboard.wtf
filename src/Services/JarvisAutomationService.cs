@@ -24,6 +24,11 @@ public sealed class JarvisAutomationService : IDisposable
     private readonly NotificationService _notifications;
     private readonly SettingsService _settings;
     private readonly JarvisActionHistoryService _history;
+    private readonly LearnedMappingService _mappings;
+    private readonly AppResolverService _apps;
+    private readonly SmartFileSearchService _files;
+    private readonly BrowserLauncherService _browsers;
+    private readonly GeminiScreenGuidanceService _screenGuidance = new();
     private readonly Action _openSettings;
     private readonly object _pendingLock = new();
     private readonly Dictionary<string, System.Threading.Timer> _timers = new(StringComparer.OrdinalIgnoreCase);
@@ -36,11 +41,16 @@ public sealed class JarvisAutomationService : IDisposable
         NotificationService notifications,
         SettingsService settings,
         JarvisActionHistoryService history,
+        LearnedMappingService mappings,
         Action openSettings)
     {
         _notifications = notifications;
         _settings = settings;
         _history = history;
+        _mappings = mappings;
+        _apps = new AppResolverService(mappings);
+        _files = new SmartFileSearchService(mappings);
+        _browsers = new BrowserLauncherService(_apps, settings);
         _openSettings = openSettings;
     }
 
@@ -66,12 +76,15 @@ public sealed class JarvisAutomationService : IDisposable
         return toolName switch
         {
             "open_app" => OpenApp(GetString(args, "app_name")),
-            "open_url" => OpenUrl(GetString(args, "url")),
-            "open_folder" => OpenFolder(GetString(args, "folder")),
-            "open_path" => OpenPath(GetString(args, "path")),
+            "open_url" => OpenUrl(GetString(args, "url"), GetString(args, "browser")),
+            "open_folder" => await OpenFolderAsync(GetString(args, "folder"), token),
+            "open_path" => await OpenPathAsync(GetString(args, "path"), token),
             "window_action" => WindowAction(GetString(args, "action"), GetString(args, "app_name")),
             "browser_action" => BrowserAction(GetString(args, "action")),
-            "web_search" => WebSearch(GetString(args, "query"), GetString(args, "engine")),
+            "web_search" => WebSearch(
+                GetString(args, "query"),
+                GetString(args, "engine") ?? GetString(args, "service"),
+                GetString(args, "browser")),
             "get_desktop_context" => GetDesktopContext(),
             "get_clipboard_text" => GetClipboardText(),
             "get_selected_text" => await GetSelectedTextAsync(token),
@@ -95,7 +108,10 @@ public sealed class JarvisAutomationService : IDisposable
                 GetString(args, "page"),
                 GetString(args, "query")),
             "open_camera" => OpenCamera(),
+            "take_photo" => TakePhoto(),
             "take_screenshot" => TakeScreenshot(),
+            "inspect_screen" => await InspectScreenAsync(GetString(args, "request"), token),
+            "virtual_desktop_action" => VirtualDesktopAction(GetString(args, "action")),
             "open_gmail_draft" => OpenGmailDraft(
                 GetString(args, "recipient"),
                 GetString(args, "subject"),
@@ -109,6 +125,24 @@ public sealed class JarvisAutomationService : IDisposable
             "list_workflows" => ListWorkflows(),
             "run_workflow" => await RunWorkflowAsync(GetString(args, "name"), token),
             "delete_workflow" => DeleteWorkflow(GetString(args, "name")),
+            "remember_app_alias" => RememberAppAlias(
+                GetString(args, "alias"),
+                GetString(args, "app_name")),
+            "remember_path_alias" => RememberPathAlias(
+                GetString(args, "alias"),
+                GetString(args, "path"),
+                GetString(args, "kind")),
+            "remember_link_alias" => RememberLinkAlias(
+                GetString(args, "alias"),
+                GetString(args, "url")),
+            "remember_workflow_alias" => RememberWorkflowAlias(
+                GetString(args, "alias"),
+                GetString(args, "workflow_name")),
+            "list_learned_mappings" => ListLearnedMappings(),
+            "forget_learned_mapping" => ForgetLearnedMapping(
+                GetString(args, "id_or_alias"),
+                GetString(args, "kind")),
+            "set_browser_preference" => SetBrowserPreference(GetString(args, "browser")),
             "request_sensitive_action" => RequestSensitiveAction(
                 GetString(args, "action"),
                 GetString(args, "target")),
@@ -120,35 +154,12 @@ public sealed class JarvisAutomationService : IDisposable
 
     private bool ShouldRequestPermission(string toolName, JsonElement args)
     {
-        if (_executingApprovedAction
-            || toolName is "request_sensitive_action" or "confirm_sensitive_action" or "cancel_sensitive_action")
-            return false;
-
-        if (toolName is "get_desktop_context" or "get_clipboard_text" or "get_selected_text"
-            or "search_files" or "list_todos" or "list_workflows" or "system_status")
-            return false;
-
-        if (toolName == "window_action"
-            && NormalizeWords(GetString(args, "action")) is "list" or "list windows")
-            return false;
-
-        var sideEffecting = toolName is
-            "open_app" or "open_url" or "open_folder" or "open_path"
-            or "window_action" or "browser_action" or "web_search"
-            or "replace_selected_text" or "type_text" or "press_key"
-            or "save_note" or "add_todo" or "complete_todo" or "set_timer"
-            or "system_control" or "play_media" or "open_service_page" or "open_camera" or "take_screenshot"
-            or "open_gmail_draft" or "prepare_whatsapp_message" or "copy_text"
-            or "create_workflow" or "run_workflow" or "delete_workflow";
-        if (!sideEffecting)
-            return false;
-
-        var appName = toolName == "open_app" ? NormalizeWords(GetString(args, "app_name")) : "";
-        // Camera and screen capture always ask, even in auto-execute mode.
-        if (toolName is "open_camera" or "take_screenshot" || appName is "camera" or "windows camera")
-            return true;
-
-        return _settings.Current.JarvisPermissionMode == JarvisPermissionMode.AlwaysAsk;
+        return JarvisPermissionPolicy.RequiresConfirmation(
+            toolName,
+            GetString(args, "action"),
+            toolName == "open_app" ? GetString(args, "app_name") : "",
+            _settings.Current.JarvisPermissionMode,
+            _executingApprovedAction);
     }
 
     private Dictionary<string, object> RequestRoutinePermission(string toolName, JsonElement args)
@@ -173,7 +184,15 @@ public sealed class JarvisAutomationService : IDisposable
             true,
             $"{description}. Ask the user to say confirm or cancel.",
             confirmationRequired: true,
-            extras: new() { ["description"] = description, ["permission_mode"] = "AlwaysAsk" });
+            extras: new()
+            {
+                ["description"] = description,
+                ["permission_mode"] = _settings.Current.JarvisPermissionMode.ToString(),
+                ["always_requires_confirmation"] = toolName is "open_camera" or "take_photo"
+                    or "take_screenshot" or "inspect_screen"
+                    || (toolName == "virtual_desktop_action"
+                        && NormalizeWords(GetString(args, "action")) is "close" or "close desktop" or "close current desktop"),
+            });
     }
 
     private static string DescribeRoutineAction(string toolName, JsonElement args) => toolName switch
@@ -196,13 +215,22 @@ public sealed class JarvisAutomationService : IDisposable
         "play_media" => $"Open {GetString(args, "query")} on {GetString(args, "service")}",
         "open_service_page" => $"Open {GetString(args, "page")} on {GetString(args, "service")}",
         "open_camera" => "Open the Windows Camera app",
+        "take_photo" => "Open Windows Camera for a manually reviewed photo",
         "take_screenshot" => "Capture and save the current screen",
+        "inspect_screen" => "Inspect the current screen once with Gemini",
+        "virtual_desktop_action" => $"{GetString(args, "action")} virtual desktop",
         "open_gmail_draft" => $"Prepare a Gmail draft for {GetString(args, "recipient")}",
         "prepare_whatsapp_message" => "Prepare a WhatsApp message",
         "copy_text" => "Copy prepared text to the clipboard",
         "create_workflow" => "Save a Jarvis workflow",
         "run_workflow" => $"Run the {GetString(args, "name")} workflow",
         "delete_workflow" => $"Delete the {GetString(args, "name")} workflow",
+        "remember_app_alias" => $"Remember {GetString(args, "alias")} as {GetString(args, "app_name")}",
+        "remember_path_alias" => $"Remember {GetString(args, "alias")} as a local path",
+        "remember_link_alias" => $"Remember {GetString(args, "alias")} as a web link",
+        "remember_workflow_alias" => $"Remember {GetString(args, "alias")} as workflow {GetString(args, "workflow_name")}",
+        "forget_learned_mapping" => $"Forget {GetString(args, "id_or_alias")}",
+        "set_browser_preference" => $"Use {GetString(args, "browser")} as the preferred browser",
         _ => $"Run {toolName.Replace('_', ' ')}",
     };
 
@@ -260,6 +288,13 @@ public sealed class JarvisAutomationService : IDisposable
         if (string.IsNullOrWhiteSpace(name))
             return Result(false, "Which app should I open?", needsClarification: true);
 
+        if (name is "downloads" or "download folder" or "downloads folder"
+            or "documents" or "documents folder" or "pictures" or "pictures folder")
+        {
+            var known = name.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+            return OpenKnownFolder(known);
+        }
+
         var webApps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["gmail"] = "https://mail.google.com/",
@@ -275,91 +310,71 @@ public sealed class JarvisAutomationService : IDisposable
             ["whatsapp"] = "https://web.whatsapp.com/",
         };
         if (webApps.TryGetValue(name, out var webUrl))
-            return OpenUrl(webUrl);
+            return OpenUrl(webUrl, "");
 
         if (name is "settings" or "keyboard settings" or "keyboard.wtf settings")
         {
             _openSettings();
             return Logged("open_app", "keyboard.wtf settings", true, "Opened keyboard.wtf settings.");
         }
-        if (name is "codex" or "openai codex")
-        {
-            if (TryStartStartApp("Codex", "OpenAI Codex"))
-                return Logged("open_app", name, true, "Opened Codex.");
-        }
-        if (name is "apple music")
-        {
-            if (TryStartStartApp("Apple Music")
-                || TryStart("iTunes.exe"))
-                return Logged("open_app", name, true, "Opened Apple Music.");
-
-            var result = OpenUrl("https://music.apple.com/");
-            result["message"] = "Apple Music is not installed here, so I opened Apple Music on the web.";
-            return result;
-        }
         if (name is "camera" or "windows camera")
             return OpenCamera();
-        if (name is "photos" or "microsoft photos")
-            return TryStart("ms-photos:")
-                ? Logged("open_app", name, true, "Opened Photos.")
-                : Logged("open_app", name, false, "Microsoft Photos could not be opened.", supported: false);
-        if (name is "clock" or "alarms" or "alarms and clock")
-            return TryStart("ms-clock:")
-                ? Logged("open_app", name, true, "Opened Clock.")
-                : Logged("open_app", name, false, "Windows Clock could not be opened.", supported: false);
-        if (name is "microsoft store" or "store")
-            return TryStart("ms-windows-store:")
-                ? Logged("open_app", name, true, "Opened Microsoft Store.")
-                : Logged("open_app", name, false, "Microsoft Store could not be opened.", supported: false);
-
-        var candidates = name switch
+        var resolution = _apps.Resolve(appName);
+        if (resolution.Status == AppResolutionStatus.Found)
         {
-            "notepad" => new[] { "notepad.exe" },
-            "calculator" or "calc" => new[] { "calc.exe" },
-            "paint" or "mspaint" => new[] { "mspaint.exe" },
-            "file explorer" or "explorer" or "files" => new[] { "explorer.exe" },
-            "terminal" or "windows terminal" => new[] { "wt.exe", "powershell.exe" },
-            "powershell" => new[] { "powershell.exe" },
-            "command prompt" or "cmd" => new[] { "cmd.exe" },
-            "task manager" => new[] { "taskmgr.exe" },
-            "snipping tool" or "screenshot tool" => new[] { "snippingtool.exe" },
-            "control panel" => new[] { "control.exe" },
-            "registry editor" or "regedit" => new[] { "regedit.exe" },
-            "vscode" or "visual studio code" or "code" => new[] { "code.exe", "code.cmd" },
-            "chrome" or "google chrome" => new[] { "chrome.exe" },
-            "edge" or "microsoft edge" => new[] { "msedge.exe" },
-            "firefox" => new[] { "firefox.exe" },
-            "spotify" => new[] { "spotify.exe" },
-            "media player" or "windows media player" or "music" => new[] { "wmplayer.exe" },
-            "discord" => new[] { "discord.exe" },
-            "slack" => new[] { "slack.exe" },
-            "teams" or "microsoft teams" => new[] { "ms-teams.exe", "teams.exe" },
-            "outlook" => new[] { "outlook.exe" },
-            _ => Array.Empty<string>(),
-        };
-
-        foreach (var candidate in candidates)
-        {
-            if (TryStart(candidate))
-                return Logged("open_app", name, true, $"Opened {appName}.");
+            if (_apps.TryLaunch(resolution.Best, out var error))
+                return Logged(
+                    "open_app",
+                    $"{appName} -> {resolution.Best.Name} ({resolution.Best.Source})",
+                    true,
+                    $"Opened {resolution.Best.Name}.",
+                    extras: new()
+                    {
+                        ["matched_name"] = resolution.Best.Name,
+                        ["match_score"] = Math.Round(resolution.Best.Score, 3),
+                        ["source"] = resolution.Best.Source,
+                    });
+            return Logged("open_app", appName, false, $"I found {resolution.Best.Name}, but Windows could not open it: {error}", supported: false);
         }
 
-        var shortcut = FindStartMenuShortcut(name);
-        if (!string.IsNullOrWhiteSpace(shortcut) && TryStart(shortcut))
-            return Logged("open_app", shortcut, true, $"Opened {Path.GetFileNameWithoutExtension(shortcut)}.");
+        if (resolution.Status == AppResolutionStatus.Ambiguous)
+        {
+            return Result(
+                false,
+                $"I found several possible apps for {appName}. Ask the user to choose one by name.",
+                needsClarification: true,
+                extras: new()
+                {
+                    ["candidates"] = resolution.Candidates.Select(candidate => new
+                    {
+                        name = candidate.Name,
+                        source = candidate.Source,
+                        score = Math.Round(candidate.Score, 3),
+                    }).ToArray(),
+                    ["searched"] = resolution.SearchSummary,
+                });
+        }
 
-        if (TryStartStartApp(appName))
-            return Logged("open_app", name, true, $"Opened {appName}.");
+        if (string.Equals(
+            AppResolverService.CanonicalizeNaturalName(appName),
+            "Apple Music",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            var webResult = OpenUrl("https://music.apple.com/", "");
+            webResult["message"] = "Apple Music was not installed, so I opened Apple Music on the web.";
+            return webResult;
+        }
 
         return Logged(
             "open_app",
             name,
             false,
-            $"I could not find {appName}. Try its exact Start menu name or save it in a workflow.",
-            supported: false);
+            $"I could not find {appName}. I searched {resolution.SearchSummary}.",
+            supported: false,
+            extras: new() { ["searched"] = resolution.SearchSummary });
     }
 
-    private Dictionary<string, object> OpenFolder(string folder)
+    private Dictionary<string, object> OpenKnownFolder(string folder)
     {
         var name = NormalizeWords(folder);
         var path = name switch
@@ -367,32 +382,144 @@ public sealed class JarvisAutomationService : IDisposable
             "desktop" => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
             "downloads" => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
             "documents" or "my documents" => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "pictures" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+            "pictures" or "photos" or "images" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
             "music" => Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
             "videos" => Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
             "home" or "user folder" => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "onedrive" or "one drive" => Environment.GetEnvironmentVariable("OneDrive"),
             "app data" or "keyboard data" => SettingsService.AppDataDir,
             "voice notes" => Models.KeyboardWtfState.EffectiveVoiceNoteSavePath,
-            _ => folder?.Trim(),
+            _ => null,
         };
-        return OpenPath(path);
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return null;
+        if (!SmartFileSearchService.TryOpenSafe(path, out var error))
+            return Logged("open_folder", path, false, error, supported: false);
+        return Logged("open_folder", path, true, $"Opened {Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar))}.");
     }
 
-    private Dictionary<string, object> OpenPath(string path)
+    private async Task<Dictionary<string, object>> OpenFolderAsync(string folder, CancellationToken token)
     {
-        var expanded = ExpandPath(path);
-        if (string.IsNullOrWhiteSpace(expanded) || (!File.Exists(expanded) && !Directory.Exists(expanded)))
-            return Logged("open_path", path, false, "That file or folder was not found.", supported: false);
-        if (File.Exists(expanded) && IsUnsafeExecutablePath(expanded))
-            return Logged(
-                "open_path",
-                expanded,
-                false,
-                "Opening executable or script files by path is blocked. Ask me to open an installed app by name instead.",
-                supported: false);
+        if (string.IsNullOrWhiteSpace(folder))
+            return Result(false, "Which folder should I open?", needsClarification: true);
+        var known = OpenKnownFolder(folder);
+        if (known != null)
+            return known;
 
-        Process.Start(new ProcessStartInfo { FileName = expanded, UseShellExecute = true });
-        return Logged("open_path", expanded, true, $"Opened {Path.GetFileName(expanded.TrimEnd(Path.DirectorySeparatorChar))}.");
+        var expanded = ExpandPath(folder);
+        if (Directory.Exists(expanded))
+        {
+            if (SmartFileSearchService.TryOpenSafe(expanded, out var error))
+                return Logged("open_folder", expanded, true, $"Opened {Path.GetFileName(expanded.TrimEnd(Path.DirectorySeparatorChar))}.");
+            return Logged("open_folder", expanded, false, error, supported: false);
+        }
+
+        var result = await _files.SearchAsync(
+            folder,
+            "",
+            includeFiles: false,
+            includeFolders: true,
+            token);
+        return OpenResolvedSearchResult("open_folder", folder, result);
+    }
+
+    private async Task<Dictionary<string, object>> OpenPathAsync(string path, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return Result(false, "Which file or folder should I open?", needsClarification: true);
+        var expanded = ExpandPath(path);
+        if (File.Exists(expanded) || Directory.Exists(expanded))
+        {
+            if (SmartFileSearchService.IsRiskyFile(expanded))
+                return Logged(
+                    "open_path",
+                    expanded,
+                    false,
+                    "Opening executable, script, installer, shortcut, or registry files by path is blocked. Ask me to open an installed app by name instead.",
+                    supported: false);
+            if (SmartFileSearchService.TryOpenSafe(expanded, out var error))
+                return Logged("open_path", expanded, true, $"Opened {Path.GetFileName(expanded.TrimEnd(Path.DirectorySeparatorChar))}.");
+            return Logged("open_path", expanded, false, error, supported: false);
+        }
+
+        var link = _mappings.FindExact(LearnedMappingKind.Link, path);
+        if (link != null)
+            return OpenUrl(link.Target, "");
+
+        var result = await _files.SearchAsync(
+            path,
+            "",
+            includeFiles: true,
+            includeFolders: true,
+            token);
+        return OpenResolvedSearchResult("open_path", path, result);
+    }
+
+    private Dictionary<string, object> OpenResolvedSearchResult(
+        string action,
+        string query,
+        FileSearchResult search)
+    {
+        if (search.Status == FileResolutionStatus.Found)
+        {
+            if (SmartFileSearchService.IsRiskyFile(search.Best.Path))
+                return Logged(
+                    action,
+                    search.Best.Path,
+                    false,
+                    "I found a matching executable, script, installer, shortcut, or registry file, but automatic opening is blocked.",
+                    supported: false);
+            if (SmartFileSearchService.TryOpenSafe(search.Best.Path, out var error))
+            {
+                return Logged(
+                    action,
+                    $"{query} -> {search.Best.Path}",
+                    true,
+                    $"Opened {search.Best.Name}.",
+                    extras: new()
+                    {
+                        ["path"] = search.Best.Path,
+                        ["score"] = Math.Round(search.Best.Score, 3),
+                        ["searched"] = search.SearchSummary,
+                    });
+            }
+            return Logged(action, search.Best.Path, false, error, supported: false);
+        }
+
+        if (search.Status == FileResolutionStatus.Ambiguous)
+        {
+            return Result(
+                false,
+                $"I found several plausible matches for {query}. Ask the user to choose one.",
+                needsClarification: true,
+                extras: new()
+                {
+                    ["matches"] = search.Candidates.Select(candidate => new
+                    {
+                        candidate.Name,
+                        candidate.Path,
+                        type = candidate.IsDirectory ? "folder" : "file",
+                        modified_at = candidate.ModifiedAt,
+                        score = Math.Round(candidate.Score, 3),
+                    }).ToArray(),
+                    ["searched"] = search.SearchSummary,
+                    ["scanned_entries"] = search.ScannedEntries,
+                });
+        }
+
+        var timeout = search.TimedOut ? " The bounded search reached its time limit." : "";
+        return Logged(
+            action,
+            query,
+            false,
+            $"No matching safe file or folder was found in {search.SearchSummary}.{timeout}",
+            supported: false,
+            extras: new()
+            {
+                ["searched"] = search.SearchSummary,
+                ["scanned_entries"] = search.ScannedEntries,
+                ["timed_out"] = search.TimedOut,
+            });
     }
 
     private Dictionary<string, object> WindowAction(string action, string appName)
@@ -456,40 +583,43 @@ public sealed class JarvisAutomationService : IDisposable
                 needsClarification: true,
                 extras: new() { ["active_process"] = activeProcess });
 
-        var keys = NormalizeWords(action) switch
+        var keys = BrowserShortcutForAction(action);
+        if (keys == null)
+            return Result(false, "That browser action is not supported yet.", supported: false);
+        SendKeysOnUiThread(keys);
+        return Logged(
+            "browser_action",
+            action,
+            true,
+            $"Sent the browser shortcut for {action}.",
+            extras: new() { ["shortcut_sent"] = true, ["verified_browser_state"] = false });
+    }
+
+    public static string BrowserShortcutForAction(string action)
+    {
+        return NormalizeWords(action) switch
         {
             "new tab" => "^t",
-            "close tab" => "^w",
-            "next tab" => "^{TAB}",
-            "previous tab" => "^+{TAB}",
-            "reopen tab" => "^+t",
+            "close tab" or "close this tab" or "close website" or "close this website" => "^w",
+            "next tab" or "change tab" or "switch tab" or "go to next tab" or "go to the next tab" => "^{TAB}",
+            "previous tab" or "switch to previous tab" or "go to previous tab" or "go to the previous tab" => "^+{TAB}",
+            "reopen tab" or "reopen closed tab" => "^+t",
             "refresh" or "reload" => "^r",
             "back" => "%{LEFT}",
             "forward" => "%{RIGHT}",
             "focus address" or "address bar" => "^l",
-            "find" => "^f",
+            "find" or "find on page" => "^f",
             "downloads" => "^j",
             "history" => "^h",
             _ => null,
         };
-        if (keys == null)
-            return Result(false, "That browser action is not supported yet.", supported: false);
-        SendKeysOnUiThread(keys);
-        return Logged("browser_action", action, true, $"Browser action completed: {action}.");
     }
 
-    private Dictionary<string, object> WebSearch(string query, string engine)
+    private Dictionary<string, object> WebSearch(string query, string engine, string browser)
     {
         if (string.IsNullOrWhiteSpace(query))
             return Result(false, "What should I search for?", needsClarification: true);
-        var encoded = Uri.EscapeDataString(query.Trim());
-        var url = NormalizeWords(engine) switch
-        {
-            "youtube" => $"https://www.youtube.com/results?search_query={encoded}",
-            "github" => $"https://github.com/search?q={encoded}",
-            _ => $"https://www.google.com/search?q={encoded}",
-        };
-        return OpenUrl(url);
+        return OpenUrl(BrowserLauncherService.BuildSearchUrl(query, engine), browser);
     }
 
     private Dictionary<string, object> GetDesktopContext()
@@ -605,24 +735,35 @@ public sealed class JarvisAutomationService : IDisposable
         if (string.IsNullOrWhiteSpace(query))
             return Result(false, "What file or folder should I search for?", needsClarification: true);
 
-        var roots = ResolveSearchRoots(location);
-        var matches = await Task.Run(() =>
-        {
-            var found = new List<string>();
-            foreach (var root in roots)
+        var search = await _files.SearchAsync(
+            query,
+            location,
+            includeFiles: true,
+            includeFolders: true,
+            token,
+            maxResults: 15);
+        var success = search.Status is FileResolutionStatus.Found or FileResolutionStatus.Ambiguous;
+        _history.Add("search_files", $"{query} in {location}", success);
+        return Result(
+            success,
+            search.Candidates.Count == 0
+                ? $"No matching files or folders were found in {search.SearchSummary}."
+                : $"Found {search.Candidates.Count} ranked matches.",
+            extras: new()
             {
-                if (!Directory.Exists(root))
-                    continue;
-                SearchDirectory(root, query.Trim(), found, 25, token);
-                if (found.Count >= 25)
-                    break;
-            }
-            return found;
-        }, token);
-
-        _history.Add("search_files", $"{query} in {location}", true);
-        return Result(true, matches.Count == 0 ? "No matching files or folders were found." : $"Found {matches.Count} matches.",
-            extras: new() { ["matches"] = matches });
+                ["matches"] = search.Candidates.Select(candidate => new
+                {
+                    candidate.Name,
+                    candidate.Path,
+                    type = candidate.IsDirectory ? "folder" : "file",
+                    modified_at = candidate.ModifiedAt,
+                    score = Math.Round(candidate.Score, 3),
+                    risky = SmartFileSearchService.IsRiskyFile(candidate.Path),
+                }).ToArray(),
+                ["searched"] = search.SearchSummary,
+                ["scanned_entries"] = search.ScannedEntries,
+                ["timed_out"] = search.TimedOut,
+            });
     }
 
     private Dictionary<string, object> SaveNote(string text, string title)
@@ -872,6 +1013,207 @@ public sealed class JarvisAutomationService : IDisposable
             extras: new() { ["path"] = path });
     }
 
+    private async Task<Dictionary<string, object>> InspectScreenAsync(string request, CancellationToken token)
+    {
+        try
+        {
+            var guidance = await _screenGuidance.InspectAsync(request, token);
+            return Logged(
+                "inspect_screen",
+                Limit(request, 180),
+                true,
+                guidance,
+                extras: new()
+                {
+                    ["guidance"] = guidance,
+                    ["capture_persisted"] = false,
+                    ["capture_scope"] = "one approved screen image",
+                    ["automation_performed"] = false,
+                });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning(ex, "Screen guidance failed");
+            return Logged(
+                "inspect_screen",
+                Limit(request, 180),
+                false,
+                $"I could not analyze the approved screen capture: {ex.Message}",
+                supported: false,
+                extras: new() { ["capture_persisted"] = false });
+        }
+    }
+
+    private Dictionary<string, object> TakePhoto()
+    {
+        var opened = OpenCamera();
+        opened["automatic_capture"] = false;
+        opened["photo_saved"] = false;
+        opened["message"] =
+            "Windows Camera is open, but automatic webcam shutter control is not enabled in this stable WinForms build. Use the visible Camera button to take the photo.";
+        return opened;
+    }
+
+    private Dictionary<string, object> VirtualDesktopAction(string action)
+    {
+        var normalized = NormalizeWords(action);
+        var key = VirtualDesktopKeyForAction(normalized);
+        if (key == 0)
+            return Result(false, "Supported virtual desktop actions are create, next, previous, and close.", supported: false);
+
+        SendChord([0x5B, 0x11, key]);
+        var message = key switch
+        {
+            0x44 => "Requested a new virtual desktop.",
+            0x27 => "Requested the next virtual desktop.",
+            0x25 => "Requested the previous virtual desktop.",
+            0x73 => "Requested closing the current virtual desktop.",
+            _ => "Virtual desktop shortcut sent.",
+        };
+        return Logged(
+            "virtual_desktop_action",
+            normalized,
+            true,
+            message,
+            extras: new() { ["shortcut_sent"] = true, ["verified_state"] = false });
+    }
+
+    public static byte VirtualDesktopKeyForAction(string action)
+    {
+        return NormalizeWords(action) switch
+        {
+            "create" or "new" or "new desktop" or "create desktop" or "create new desktop" or "create a new desktop" => (byte)0x44,
+            "next" or "next desktop" or "switch next" or "switch to next desktop" or "move to next desktop" => (byte)0x27,
+            "previous" or "previous desktop" or "switch previous" or "switch to previous desktop" => (byte)0x25,
+            "close" or "close desktop" or "close current desktop" => (byte)0x73,
+            _ => (byte)0,
+        };
+    }
+
+    private Dictionary<string, object> RememberAppAlias(string alias, string appName)
+    {
+        if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(appName))
+            return Result(false, "Provide both the phrase to remember and the installed app name.", needsClarification: true);
+        var resolution = _apps.Resolve(appName, refresh: true);
+        if (resolution.Status != AppResolutionStatus.Found)
+        {
+            return Result(
+                false,
+                resolution.Status == AppResolutionStatus.Ambiguous
+                    ? $"Several installed apps match {appName}. Ask the user to choose the exact app name first."
+                    : $"I could not find an installed app matching {appName}.",
+                supported: false,
+                needsClarification: resolution.Status == AppResolutionStatus.Ambiguous,
+                extras: new()
+                {
+                    ["candidates"] = resolution.Candidates.Select(candidate => candidate.Name).ToArray(),
+                });
+        }
+
+        var entry = _mappings.Remember(
+            LearnedMappingKind.App,
+            alias,
+            resolution.Best.LaunchTarget,
+            resolution.Best.Name);
+        return Logged(
+            "remember_app_alias",
+            $"{entry.Alias} -> {entry.DisplayName}",
+            true,
+            $"I will use {entry.DisplayName} when you say {entry.Alias}.",
+            extras: new() { ["mapping"] = PublicMapping(entry) });
+    }
+
+    private Dictionary<string, object> RememberPathAlias(string alias, string path, string kind)
+    {
+        var expanded = ExpandPath(path);
+        var isFolder = Directory.Exists(expanded);
+        var isFile = File.Exists(expanded);
+        if (!isFolder && !isFile)
+            return Result(false, "That local file or folder does not exist.", supported: false);
+        if (isFile && SmartFileSearchService.IsRiskyFile(expanded))
+            return Result(false, "Executable, script, installer, shortcut, and registry files cannot be saved as openable aliases.", supported: false);
+        var mappingKind = NormalizeWords(kind) == "folder" || isFolder
+            ? LearnedMappingKind.Folder
+            : LearnedMappingKind.File;
+        var entry = _mappings.Remember(mappingKind, alias, expanded, Path.GetFileName(expanded.TrimEnd(Path.DirectorySeparatorChar)));
+        return Logged(
+            "remember_path_alias",
+            $"{entry.Alias} -> {entry.Target}",
+            true,
+            $"Remembered {entry.Alias}.",
+            extras: new() { ["mapping"] = PublicMapping(entry) });
+    }
+
+    private Dictionary<string, object> RememberLinkAlias(string alias, string url)
+    {
+        var entry = _mappings.Remember(LearnedMappingKind.Link, alias, url, url);
+        return Logged(
+            "remember_link_alias",
+            $"{entry.Alias} -> {entry.Target}",
+            true,
+            $"Remembered the link {entry.Alias}.",
+            extras: new() { ["mapping"] = PublicMapping(entry) });
+    }
+
+    private Dictionary<string, object> RememberWorkflowAlias(string alias, string workflowName)
+    {
+        var workflow = FindWorkflow(workflowName);
+        if (workflow == null)
+            return Result(false, $"Workflow {workflowName} was not found.", supported: false);
+        var entry = _mappings.Remember(
+            LearnedMappingKind.Workflow,
+            alias,
+            workflow.Name,
+            workflow.Name);
+        return Logged(
+            "remember_workflow_alias",
+            $"{entry.Alias} -> {entry.Target}",
+            true,
+            $"I will use workflow {entry.Target} when you say {entry.Alias}.",
+            extras: new() { ["mapping"] = PublicMapping(entry) });
+    }
+
+    private Dictionary<string, object> ListLearnedMappings()
+    {
+        var entries = _mappings.Snapshot();
+        return Result(
+            true,
+            entries.Count == 0 ? "No learned mappings are saved." : $"Loaded {entries.Count} learned mappings.",
+            extras: new() { ["mappings"] = entries.Select(PublicMapping).ToArray() });
+    }
+
+    private Dictionary<string, object> ForgetLearnedMapping(string idOrAlias, string kind)
+    {
+        LearnedMappingKind? parsedKind = Enum.TryParse<LearnedMappingKind>(kind, true, out var value)
+            ? value
+            : null;
+        var removed = _mappings.Forget(idOrAlias, parsedKind);
+        return Logged(
+            "forget_learned_mapping",
+            idOrAlias,
+            removed,
+            removed ? "Learned mapping forgotten." : "No matching learned mapping was found.");
+    }
+
+    private Dictionary<string, object> SetBrowserPreference(string browser)
+    {
+        var normalized = BrowserLauncherService.NormalizeBrowser(browser);
+        if (!string.IsNullOrWhiteSpace(normalized) && _browsers.FindBrowserExecutable(normalized) == null)
+            return Result(false, $"{browser} is not installed, so the browser preference was not changed.", supported: false);
+        _settings.SavePreferredBrowser(normalized);
+        return Logged(
+            "set_browser_preference",
+            normalized,
+            true,
+            string.IsNullOrWhiteSpace(normalized)
+                ? "Future links will use the Windows default browser."
+                : $"Future links will use {browser} unless you name another browser.");
+    }
+
     private Dictionary<string, object> OpenGmailDraft(string recipient, string subject, string body)
     {
         if (string.IsNullOrWhiteSpace(recipient))
@@ -983,7 +1325,7 @@ public sealed class JarvisAutomationService : IDisposable
         }
         if (!string.IsNullOrWhiteSpace(workflow.Folder))
         {
-            var result = OpenFolder(workflow.Folder);
+            var result = await OpenFolderAsync(workflow.Folder, token);
             if (!Succeeded(result))
                 failures.Add(result["message"]?.ToString() ?? $"Could not open {workflow.Folder}.");
         }
@@ -1141,25 +1483,56 @@ public sealed class JarvisAutomationService : IDisposable
         }
     }
 
-    private Dictionary<string, object> OpenUrl(string url)
+    private Dictionary<string, object> OpenUrl(string url, string browser = null)
     {
         if (url?.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase) == true)
         {
+            if (!string.IsNullOrWhiteSpace(browser))
+                return Logged("open_url", url, false, "Windows settings pages cannot be targeted to a web browser.", supported: false);
             Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
             return Logged("open_settings_page", url, true, "Opened Windows settings.");
         }
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-            return Logged("open_url", url, false, "Only http and https links can be opened.", supported: false);
-        Process.Start(new ProcessStartInfo { FileName = uri.ToString(), UseShellExecute = true });
-        return Logged("open_url", uri.ToString(), true, $"Opened {uri.Host}.");
+        var learned = _mappings.FindExact(LearnedMappingKind.Link, url);
+        if (learned != null)
+            url = learned.Target;
+        if (!_browsers.TryOpen(url, browser, out var message, out var browserUsed))
+        {
+            return Logged(
+                "open_url",
+                $"{url} browser={browser}",
+                false,
+                message,
+                supported: false,
+                extras: new()
+                {
+                    ["requested_browser"] = BrowserLauncherService.NormalizeBrowser(browser),
+                    ["fallback_used"] = false,
+                });
+        }
+        return Logged(
+            "open_url",
+            $"{url} browser={browserUsed}",
+            true,
+            message,
+            extras: new() { ["browser"] = browserUsed });
     }
 
     private JarvisWorkflowSettings FindWorkflow(string name)
     {
+        var learned = _mappings.FindExact(LearnedMappingKind.Workflow, name);
+        if (learned != null)
+            name = learned.Target;
         var normalized = NormalizeWords(name);
         var saved = _settings.Current.JarvisWorkflows?.FirstOrDefault(w =>
             string.Equals(NormalizeWords(w.Name), normalized, StringComparison.OrdinalIgnoreCase));
+        if (saved != null)
+            return saved;
+        saved = _settings.Current.JarvisWorkflows?
+            .Select(workflow => new { Workflow = workflow, Score = FuzzyMatcher.Score(normalized, workflow.Name) })
+            .Where(item => item.Score >= 0.82)
+            .OrderByDescending(item => item.Score)
+            .Select(item => item.Workflow)
+            .FirstOrDefault();
         if (saved != null)
             return saved;
         return normalized switch
@@ -1255,15 +1628,15 @@ public sealed class JarvisAutomationService : IDisposable
     private static bool Succeeded(Dictionary<string, object> result) =>
         result.TryGetValue("ok", out var ok) && ok is bool success && success;
 
-    private static bool IsUnsafeExecutablePath(string path)
+    private static object PublicMapping(LearnedMappingEntry entry) => new
     {
-        var extension = Path.GetExtension(path);
-        return new[]
-        {
-            ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".msi", ".msix", ".appx",
-            ".scr", ".reg", ".lnk", ".url", ".hta", ".js", ".jse", ".vbs", ".vbe", ".wsf",
-        }.Contains(extension, StringComparer.OrdinalIgnoreCase);
-    }
+        entry.Id,
+        kind = entry.Kind.ToString(),
+        entry.Alias,
+        entry.DisplayName,
+        target = entry.Kind == LearnedMappingKind.App ? entry.DisplayName : entry.Target,
+        entry.UpdatedAt,
+    };
 
     private static bool TryStart(string fileName)
     {
@@ -1273,109 +1646,6 @@ public sealed class JarvisAutomationService : IDisposable
             return true;
         }
         catch { return false; }
-    }
-
-    private static bool TryStartPackagedApp(params string[] appIds)
-    {
-        foreach (var appId in appIds.Where(id => !string.IsNullOrWhiteSpace(id)))
-        {
-            try
-            {
-                var info = new ProcessStartInfo
-                {
-                    FileName = "explorer.exe",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                info.ArgumentList.Add($@"shell:AppsFolder\{appId}");
-                Process.Start(info);
-                return true;
-            }
-            catch { }
-        }
-
-        return false;
-    }
-
-    private static bool TryStartStartApp(params string[] names)
-    {
-        foreach (var name in names.Where(value => !string.IsNullOrWhiteSpace(value)))
-        {
-            var appId = FindStartAppId(name);
-            if (!string.IsNullOrWhiteSpace(appId) && TryStartPackagedApp(appId))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static string FindStartMenuShortcut(string name)
-    {
-        var roots = new[]
-        {
-            Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu),
-        };
-        foreach (var root in roots)
-        {
-            try
-            {
-                var match = Directory.EnumerateFiles(root, "*.lnk", SearchOption.AllDirectories)
-                    .FirstOrDefault(path => Path.GetFileNameWithoutExtension(path)
-                        .Contains(name, StringComparison.OrdinalIgnoreCase));
-                if (match != null)
-                    return match;
-            }
-            catch { }
-        }
-        return null;
-    }
-
-    private static string FindStartAppId(string name)
-    {
-        try
-        {
-            var info = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            info.ArgumentList.Add("-NoProfile");
-            info.ArgumentList.Add("-ExecutionPolicy");
-            info.ArgumentList.Add("Bypass");
-            info.ArgumentList.Add("-Command");
-            info.ArgumentList.Add(BuildStartAppLookupCommand(name));
-
-            using var process = Process.Start(info);
-            if (process == null)
-                return null;
-            if (!process.WaitForExit(3500))
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                return null;
-            }
-
-            return process.StandardOutput.ReadToEnd().Trim();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static string BuildStartAppLookupCommand(string name)
-    {
-        var safe = (name ?? "").Replace("'", "''");
-        return
-            "$needle = '" + safe + "'; " +
-            "$exact = Get-StartApps | Where-Object { $_.Name -eq $needle } | Select-Object -First 1 -ExpandProperty AppID; " +
-            "if ($exact) { $exact; exit } " +
-            "$contains = Get-StartApps | Where-Object { $_.Name -like ('*' + $needle + '*') -or $needle -like ('*' + $_.Name + '*') } | Select-Object -First 1 -ExpandProperty AppID; " +
-            "if ($contains) { $contains }";
-
     }
 
     private static string ExpandPath(string path)
@@ -1450,58 +1720,12 @@ public sealed class JarvisAutomationService : IDisposable
         }
     }
 
-    private static IReadOnlyList<string> ResolveSearchRoots(string location)
+    private static void SendChord(byte[] keys)
     {
-        var normalized = NormalizeWords(location);
-        if (normalized == "desktop")
-            return new[] { Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory) };
-        if (normalized == "downloads")
-            return new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads") };
-        if (normalized == "documents")
-            return new[] { Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) };
-        var expanded = ExpandPath(location);
-        if (Directory.Exists(expanded))
-            return new[] { expanded };
-        return new[]
-        {
-            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        };
-    }
-
-    private static void SearchDirectory(
-        string root,
-        string query,
-        List<string> found,
-        int limit,
-        CancellationToken token)
-    {
-        var stack = new Stack<(string Path, int Depth)>();
-        stack.Push((root, 0));
-        while (stack.Count > 0 && found.Count < limit)
-        {
-            token.ThrowIfCancellationRequested();
-            var current = stack.Pop();
-            try
-            {
-                foreach (var entry in Directory.EnumerateFileSystemEntries(current.Path))
-                {
-                    token.ThrowIfCancellationRequested();
-                    if (Path.GetFileName(entry).Contains(query, StringComparison.OrdinalIgnoreCase))
-                    {
-                        found.Add(entry);
-                        if (found.Count >= limit)
-                            break;
-                    }
-                    if (current.Depth < 5 && Directory.Exists(entry)
-                        && !File.GetAttributes(entry).HasFlag(FileAttributes.ReparsePoint))
-                        stack.Push((entry, current.Depth + 1));
-                }
-            }
-            catch (UnauthorizedAccessException) { }
-            catch (IOException) { }
-        }
+        foreach (var key in keys)
+            keybd_event(key, 0, 0, UIntPtr.Zero);
+        for (var index = keys.Length - 1; index >= 0; index--)
+            keybd_event(keys[index], 0, KeyeventfKeyup, UIntPtr.Zero);
     }
 
     private List<JarvisTodo> LoadTodos()
@@ -1549,6 +1773,7 @@ public sealed class JarvisAutomationService : IDisposable
                 timer.Dispose();
             _timers.Clear();
         }
+        _screenGuidance.Dispose();
     }
 
     private sealed class PendingJarvisAction

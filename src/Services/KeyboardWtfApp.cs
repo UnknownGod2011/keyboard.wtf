@@ -17,6 +17,7 @@ public sealed class KeyboardWtfApp : IDisposable
     private readonly HotkeyService _hotkeys = new();
     private readonly IntentMemoryService _intentMemory = new();
     private readonly JarvisActionHistoryService _jarvisHistory = new();
+    private readonly LearnedMappingService _learnedMappings = new();
 
     private NotificationService _notifications;
     private VoiceCaptureService _capture;
@@ -24,6 +25,8 @@ public sealed class KeyboardWtfApp : IDisposable
     private VoiceOverlayForm _overlay;
     private GeminiLiveConversationService _liveConversation;
     private JarvisAutomationService _jarvisAutomation;
+    private System.Windows.Forms.Timer _startupHotkeyRetryTimer;
+    private int _startupHotkeyRetryCount;
     private bool _disposed;
 
     public KeyboardWtfApp(NotifyIcon notifyIcon)
@@ -44,6 +47,7 @@ public sealed class KeyboardWtfApp : IDisposable
         _settings.Load();
         _intentMemory.Load();
         _jarvisHistory.Load();
+        _learnedMappings.Load();
         SyncStartupRegistration();
         ApplySecretEnvironmentOverrides();
         AiProviderRegistry.Initialize(_claudeApi);
@@ -55,6 +59,7 @@ public sealed class KeyboardWtfApp : IDisposable
             _notifications,
             _settings,
             _jarvisHistory,
+            _learnedMappings,
             OpenSettings);
         _commands = new CommandRegistry(
             this,
@@ -74,11 +79,18 @@ public sealed class KeyboardWtfApp : IDisposable
             _settings,
             _hotkeys,
             _intentMemory,
-            _jarvisHistory);
+            _jarvisHistory,
+            _learnedMappings);
         WebSettingsService.Instance.Start();
 
         _hotkeys.RegistrationFailed += (name, reason) => _notifications.Warning("Hotkey unavailable", $"{name}: {reason}");
-        RegisterHotkeys();
+        _hotkeys.RegistrationFallbackUsed += (name, requested, fallback) =>
+            _notifications.Warning(
+                "Hotkey conflict handled",
+                $"{name}: {requested} is in use, so keyboard.wtf is using {fallback}. Change it in Settings if preferred.");
+        if (!RegisterHotkeys()
+            && !HotkeyService.HasDuplicates(_settings.Current.Hotkeys, out _))
+            ScheduleStartupHotkeyRetry();
         LoadModelsAsync();
         StartPiperInstallInBackground();
         OpenFirstRunSetup();
@@ -86,15 +98,34 @@ public sealed class KeyboardWtfApp : IDisposable
         _notifications.Info("keyboard.wtf", "Stop typing. Say it.");
     }
 
-    public void RegisterHotkeys()
+    public bool RegisterHotkeys()
     {
         if (HotkeyService.HasDuplicates(_settings.Current.Hotkeys, out var duplicate))
         {
             _notifications.Warning("Duplicate hotkey", $"{duplicate} is assigned more than once. Reset or change it in settings.");
-            return;
+            return false;
         }
 
-        _hotkeys.RegisterDefaults(_settings.Current.Hotkeys, _commands);
+        return _hotkeys.RegisterDefaults(_settings.Current.Hotkeys, _commands);
+    }
+
+    private void ScheduleStartupHotkeyRetry()
+    {
+        _startupHotkeyRetryTimer?.Dispose();
+        _startupHotkeyRetryCount = 0;
+        _startupHotkeyRetryTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+        _startupHotkeyRetryTimer.Tick += (_, _) =>
+        {
+            _startupHotkeyRetryCount++;
+            AppLog.Info($"Retrying hotkey registration after startup ({_startupHotkeyRetryCount}/3)");
+            if (RegisterHotkeys() || _startupHotkeyRetryCount >= 3)
+            {
+                _startupHotkeyRetryTimer.Stop();
+                _startupHotkeyRetryTimer.Dispose();
+                _startupHotkeyRetryTimer = null;
+            }
+        };
+        _startupHotkeyRetryTimer.Start();
     }
 
     public void OpenSettings() => WebSettingsService.Instance.OpenInBrowser();
@@ -259,6 +290,7 @@ public sealed class KeyboardWtfApp : IDisposable
         _disposed = true;
         WebSettingsService.Instance?.Dispose();
         _hotkeys.Dispose();
+        _startupHotkeyRetryTimer?.Dispose();
         _audioRecorder.Dispose();
         _speechRecognition.Dispose();
         _claudeApi.Dispose();

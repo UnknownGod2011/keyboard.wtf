@@ -5,6 +5,7 @@ using System.Text.Json;
 using KeyboardWtf.Destinations;
 using KeyboardWtf.Helpers;
 using KeyboardWtf.Models;
+using System.Windows.Forms;
 
 public sealed class CommandRegistry
 {
@@ -600,8 +601,14 @@ public sealed class CommandRegistry
         var destination = _settings.Current.TextDeliveryMode switch
         {
             VoiceTextDeliveryMode.ClipboardOnly => "Clipboard",
+            VoiceTextDeliveryMode.AskEveryTime => ChooseDeliveryDestination(),
             _ => "Type Out",
         };
+        if (string.IsNullOrWhiteSpace(destination))
+        {
+            KeyboardWtfState.SetUi(VoiceUiPhase.Cancelled, "Delivery cancelled", "The transcript was not typed or copied.");
+            return;
+        }
 
         var ok = await _router.SendAsync(destination, text);
         if (!ok && destination == "Type Out")
@@ -617,6 +624,29 @@ public sealed class CommandRegistry
                 ok ? "Done" : "Delivery failed",
                 ok ? Shorten(text, 90) : "The transcript remains on the clipboard.");
         }
+    }
+
+    private static string ChooseDeliveryDestination()
+    {
+        DialogResult ShowChoice() => MessageBox.Show(
+            "Type this transcript into the active app?\n\nChoose No to copy it to the clipboard instead.",
+            "keyboard.wtf delivery",
+            MessageBoxButtons.YesNoCancel,
+            MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button1);
+
+        var owner = Application.OpenForms.Cast<Form>().FirstOrDefault();
+        DialogResult choice;
+        if (owner?.InvokeRequired == true)
+            choice = (DialogResult)owner.Invoke(ShowChoice);
+        else
+            choice = ShowChoice();
+        return choice switch
+        {
+            DialogResult.Yes => "Type Out",
+            DialogResult.No => "Clipboard",
+            _ => "",
+        };
     }
 
     private async Task CancelCurrentAsync()
@@ -721,11 +751,21 @@ public sealed class CommandRegistry
         "play_media" => "Opening media",
         "open_service_page" => "Opening service page",
         "open_camera" => "Opening camera",
+        "take_photo" => "Opening camera for photo",
         "take_screenshot" => "Taking screenshot",
+        "inspect_screen" => "Inspecting screen",
+        "virtual_desktop_action" => "Controlling virtual desktop",
         "create_workflow" => "Saving workflow",
         "list_workflows" => "Reading workflows",
         "run_workflow" => "Running workflow",
         "delete_workflow" => "Deleting workflow",
+        "remember_app_alias" => "Remembering app mapping",
+        "remember_path_alias" => "Remembering local path",
+        "remember_link_alias" => "Remembering link",
+        "remember_workflow_alias" => "Remembering workflow name",
+        "list_learned_mappings" => "Reading learned mappings",
+        "forget_learned_mapping" => "Forgetting learned mapping",
+        "set_browser_preference" => "Saving browser preference",
         "request_sensitive_action" => "Requesting confirmation",
         "confirm_sensitive_action" => "Confirming action",
         "cancel_sensitive_action" => "Cancelling action",

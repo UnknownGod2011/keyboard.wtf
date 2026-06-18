@@ -9,6 +9,7 @@ $publishDir = Join-Path $root "dist\release\keyboard-wtf-win-x64"
 $installerScript = Join-Path $root "installer\keyboard-wtf.iss"
 $installerDir = Join-Path $root "dist\installer"
 $siteDownloadDir = Join-Path $root "site\downloads"
+$siteIndex = Join-Path $root "site\index.html"
 $iscc = Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"
 
 if (-not (Test-Path -LiteralPath $iscc)) {
@@ -63,6 +64,15 @@ if (-not $copied) {
 
 $hash = Get-FileHash -LiteralPath $siteInstaller -Algorithm SHA256
 $sizeMb = [Math]::Round((Get-Item -LiteralPath $siteInstaller).Length / 1MB, 1)
+$siteHtml = Get-Content -LiteralPath $siteIndex -Raw
+$updatedSiteHtml = $siteHtml -replace 'SHA256 [A-Fa-f0-9]{64}', "SHA256 $($hash.Hash)"
+if ($updatedSiteHtml -eq $siteHtml -and $siteHtml -notmatch "SHA256 $($hash.Hash)") {
+    throw "Could not update the website installer hash"
+}
+[System.IO.File]::WriteAllText(
+    $siteIndex,
+    $updatedSiteHtml,
+    [System.Text.UTF8Encoding]::new($false))
 
 Write-Host "Built: $siteInstaller"
 Write-Host "Size: $sizeMb MB"

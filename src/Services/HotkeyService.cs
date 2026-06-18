@@ -6,23 +6,39 @@ using System.Windows.Forms;
 public sealed class HotkeyService : IMessageFilter, IDisposable
 {
     private const int WmHotkey = 0x0312;
-    private readonly Dictionary<int, (string Name, Action Handler)> _handlers = new();
+    public const string JarvisFallback = "Ctrl+Alt+J";
+    public const string CancelFallback = "Ctrl+Alt+Escape";
+
+    private readonly Dictionary<int, (string Name, string Hotkey, Action Handler)> _handlers = new();
     private int _nextId = 100;
     private bool _disposed;
+    private bool _filterAdded;
 
     public event Action<string, string> RegistrationFailed;
+    public event Action<string, string, string> RegistrationFallbackUsed;
 
-    public void RegisterDefaults(HotkeySettings settings, CommandRegistry commands)
+    public IReadOnlyDictionary<string, string> ActiveRegistrations =>
+        _handlers.Values.ToDictionary(entry => entry.Name, entry => entry.Hotkey, StringComparer.OrdinalIgnoreCase);
+
+    public bool RegisterDefaults(HotkeySettings settings, CommandRegistry commands)
     {
         UnregisterAll();
-        Application.AddMessageFilter(this);
+        if (!_filterAdded)
+        {
+            Application.AddMessageFilter(this);
+            _filterAdded = true;
+        }
 
         var hotkeys = settings ?? HotkeySettings.Defaults();
-        Register("SmartWriting", hotkeys.PushToTalk, commands.ToggleSmartMode);
-        Register("Dictation", hotkeys.Dictation, commands.ToggleDictation);
-        Register("Jarvis", hotkeys.Jarvis, commands.ToggleJarvisMode);
-        Register("Cancel", hotkeys.Cancel, commands.CancelCurrent);
-        Register("OpenSettings", hotkeys.OpenSettings, commands.OpenSettings);
+        var results = new[]
+        {
+            Register("SmartWriting", hotkeys.PushToTalk, commands.ToggleSmartMode),
+            Register("Dictation", hotkeys.Dictation, commands.ToggleDictation),
+            Register("Jarvis", hotkeys.Jarvis, commands.ToggleJarvisMode, JarvisFallback),
+            Register("Cancel", hotkeys.Cancel, commands.CancelCurrent, CancelFallback),
+            Register("OpenSettings", hotkeys.OpenSettings, commands.OpenSettings),
+        };
+        return results.All(result => result);
     }
 
     public static bool HasDuplicates(HotkeySettings settings, out string duplicate)
@@ -44,23 +60,51 @@ public sealed class HotkeyService : IMessageFilter, IDisposable
         return false;
     }
 
-    private void Register(string name, string hotkey, Action handler)
+    private bool Register(string name, string hotkey, Action handler, string fallback = null)
     {
+        if (TryRegister(name, hotkey, handler, out var primaryReason))
+            return true;
+
+        if (!string.IsNullOrWhiteSpace(fallback)
+            && !string.Equals(Normalize(hotkey), Normalize(fallback), StringComparison.OrdinalIgnoreCase)
+            && TryRegister(name, fallback, handler, out var fallbackReason))
+        {
+            RegistrationFallbackUsed?.Invoke(name, hotkey, fallback);
+            AppLog.Warning($"{name} hotkey {hotkey} was unavailable; registered fallback {fallback}");
+            return true;
+        }
+
+        RegistrationFailed?.Invoke(
+            name,
+            string.IsNullOrWhiteSpace(fallback)
+                ? primaryReason
+                : $"{primaryReason} Fallback {fallback} was also unavailable.");
+        return false;
+    }
+
+    private bool TryRegister(
+        string name,
+        string hotkey,
+        Action handler,
+        out string failureReason)
+    {
+        failureReason = "";
         if (!TryParse(hotkey, out var modifiers, out var key))
         {
-            RegistrationFailed?.Invoke(name, $"Invalid hotkey: {hotkey}");
-            return;
+            failureReason = $"Invalid hotkey: {hotkey}";
+            return false;
         }
 
         var id = _nextId++;
         if (!RegisterHotKey(IntPtr.Zero, id, modifiers, (uint)key))
         {
-            RegistrationFailed?.Invoke(name, $"{hotkey} is already in use by Windows or another app.");
-            return;
+            failureReason = $"{hotkey} is already in use by Windows or another app.";
+            return false;
         }
 
-        _handlers[id] = (name, handler);
+        _handlers[id] = (name, hotkey, handler);
         AppLog.Info($"Registered hotkey {name}: {hotkey}");
+        return true;
     }
 
     public bool PreFilterMessage(ref Message m)
@@ -90,7 +134,11 @@ public sealed class HotkeyService : IMessageFilter, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        Application.RemoveMessageFilter(this);
+        if (_filterAdded)
+        {
+            Application.RemoveMessageFilter(this);
+            _filterAdded = false;
+        }
         UnregisterAll();
     }
 

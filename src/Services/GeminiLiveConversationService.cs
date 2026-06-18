@@ -503,8 +503,16 @@ public sealed class GeminiLiveConversationService : IDisposable
             permissionInstruction +
             "You can chat normally, but when the user asks you to do a supported computer action, call the matching tool immediately. " +
             "Use tools only for allowed actions; never claim an action finished until the tool response says it did. " +
+            "App names and file names do not need to be exact. Use open_app, open_folder, open_path, or search_files with the user's natural approximate wording; the local resolver performs fuzzy matching and returns choices when confidence is low. " +
+            "If the local resolver returns multiple candidates, read only the short names, ask the user to choose, and then retry with the chosen name or path. Do not guess between ambiguous matches. " +
+            "If the user corrects an app, file, folder, link, or browser choice, ask whether they want that correction remembered. Call a remember tool only after they explicitly approve it. " +
+            "Use list_learned_mappings and forget_learned_mapping for requests to inspect or forget local mappings. " +
             "Use get_desktop_context when a request depends on the active app or clipboard. Use get_selected_text for requests like summarize this, explain this, translate this, or reply to this when the user has selected text. " +
             "Browser tab actions use the active browser. Full webpage DOM reading and reliable form automation require a future browser extension; explain that limitation when selected text is not enough. " +
+            "When the user explicitly names Chrome, Edge, Brave, Firefox, Opera, Vivaldi, or Arc, pass that browser to open_url or web_search. Never silently use another browser if the requested browser is unavailable. " +
+            "Screen inspection is one-shot and privacy-sensitive. Call inspect_screen only after the user explicitly asks to look at the screen; the local permission gate will still require a fresh confirmation. Relay the returned guidance without claiming you clicked anything. " +
+            "Camera opening and take-photo requests always require local permission. take_photo currently opens Windows Camera for manual shutter use; never claim a photo was captured or saved when automatic_capture is false. " +
+            "Virtual desktop create/next/previous actions use Windows shortcuts. Closing the current virtual desktop requires confirmation. A successful tool response means the shortcut was sent, not that desktop state was independently verified. " +
             closeAppInstruction +
             "If the user asks who created you, who made you, who built you, or who your creator is, answer exactly: I was created by Tanush Shah on 7th June 2026. Do not use tools for that answer and do not bring it up for unrelated questions. " +
             "Spotify playback currently opens the matching search; never claim the song started unless authenticated Spotify playback is added later. Camera control opens Windows Camera; never claim a photo was taken. take_screenshot captures the desktop, not the webcam. " +
@@ -534,7 +542,7 @@ public sealed class GeminiLiveConversationService : IDisposable
                     "app_name"),
                 FunctionDeclaration(
                     "open_folder",
-                    "Open a known folder such as Desktop, Downloads, Documents, Pictures, Music, Videos, home, voice notes, or a provided existing folder path.",
+                    "Open a known, learned, or approximately named folder. The local resolver searches common user locations safely and asks for a choice when results are ambiguous.",
                     new()
                     {
                         ["folder"] = Schema("string", "Known folder name or existing folder path."),
@@ -542,7 +550,7 @@ public sealed class GeminiLiveConversationService : IDisposable
                     "folder"),
                 FunctionDeclaration(
                     "open_path",
-                    "Open an existing local document or folder path. Executable and script files are blocked. Never invent a path.",
+                    "Open an existing or approximately named safe local document or folder. Executable, script, installer, shortcut, and registry files are blocked. Never invent a path.",
                     new()
                     {
                         ["path"] = Schema("string", "Existing local file or folder path."),
@@ -550,10 +558,11 @@ public sealed class GeminiLiveConversationService : IDisposable
                     "path"),
                 FunctionDeclaration(
                     "open_url",
-                    "Open a safe http or https URL in the user's default browser.",
+                    "Open a safe http or https URL. Uses the Windows default browser unless the user explicitly names a supported browser.",
                     new()
                     {
                         ["url"] = Schema("string", "An absolute http or https URL."),
+                        ["browser"] = Schema("string", "Optional: chrome, edge, brave, firefox, opera, vivaldi, or arc. Leave empty for default behavior."),
                     },
                     "url"),
                 FunctionDeclaration(
@@ -567,7 +576,7 @@ public sealed class GeminiLiveConversationService : IDisposable
                     "action"),
                 FunctionDeclaration(
                     "browser_action",
-                    "Control the active browser using keyboard shortcuts.",
+                    "Control the active browser using safe keyboard shortcuts. Natural requests such as change tab, close this website, or switch to previous tab are supported.",
                     new()
                     {
                         ["action"] = Schema("string", "One of: new tab, close tab, next tab, previous tab, reopen tab, refresh, back, forward, focus address, find, downloads, history."),
@@ -575,11 +584,12 @@ public sealed class GeminiLiveConversationService : IDisposable
                     "action"),
                 FunctionDeclaration(
                     "web_search",
-                    "Search Google, YouTube, or GitHub in the default browser.",
+                    "Search Google, Bing, YouTube, or GitHub, optionally in a specifically requested installed browser.",
                     new()
                     {
                         ["query"] = Schema("string", "Search query."),
                         ["engine"] = Schema("string", "google, youtube, or github."),
+                        ["browser"] = Schema("string", "Optional: chrome, edge, brave, firefox, opera, vivaldi, or arc."),
                     },
                     "query"),
                 FunctionDeclaration(
@@ -629,7 +639,7 @@ public sealed class GeminiLiveConversationService : IDisposable
                     "key"),
                 FunctionDeclaration(
                     "search_files",
-                    "Search file and folder names under Desktop, Downloads, Documents, or a provided folder. Returns at most 25 matches.",
+                    "Fuzzy-search file and folder names under Desktop, Downloads, Documents, Pictures, Videos, Music, OneDrive, learned folders, or a provided folder. Search is bounded and results are ranked.",
                     new()
                     {
                         ["query"] = Schema("string", "File or folder name fragment."),
@@ -721,12 +731,35 @@ public sealed class GeminiLiveConversationService : IDisposable
                         ["open"] = Schema("boolean", "Set true to open Windows Camera."),
                     }),
                 FunctionDeclaration(
+                    "take_photo",
+                    "Request a photo. The stable Windows build opens Windows Camera for manual shutter use and reports automatic_capture false; never claim the photo was saved automatically.",
+                    new()
+                    {
+                        ["capture"] = Schema("boolean", "Set true only when the user explicitly asks to take or click a photo."),
+                    }),
+                FunctionDeclaration(
                     "take_screenshot",
                     "Capture the Windows desktop and save a PNG under Pictures/keyboard.wtf/Screenshots. This captures the screen, not the webcam.",
                     new()
                     {
                         ["capture"] = Schema("boolean", "Set true to capture the desktop."),
                     }),
+                FunctionDeclaration(
+                    "inspect_screen",
+                    "Capture the current Windows screen once in memory after explicit permission, analyze it with Gemini vision, and return textual guidance. The image is not saved and no clicks are performed.",
+                    new()
+                    {
+                        ["request"] = Schema("string", "What the user wants explained or guided from the visible screen."),
+                    },
+                    "request"),
+                FunctionDeclaration(
+                    "virtual_desktop_action",
+                    "Send an allowlisted Windows virtual desktop shortcut. Supported actions: create, next, previous, close. Closing requires confirmation.",
+                    new()
+                    {
+                        ["action"] = Schema("string", "create, next, previous, or close."),
+                    },
+                    "action"),
                 FunctionDeclaration(
                     "create_workflow",
                     "Create or update a reusable workflow made only of app names, safe URLs, and an optional folder.",
@@ -761,6 +794,71 @@ public sealed class GeminiLiveConversationService : IDisposable
                         ["name"] = Schema("string", "Workflow name."),
                     },
                     "name"),
+                FunctionDeclaration(
+                    "remember_app_alias",
+                    "Save a user-approved local alias for a discovered installed app. Use only after the user explicitly asks to remember the correction.",
+                    new()
+                    {
+                        ["alias"] = Schema("string", "The phrase the user wants to say later."),
+                        ["app_name"] = Schema("string", "The exact installed app name the user selected."),
+                    },
+                    "alias",
+                    "app_name"),
+                FunctionDeclaration(
+                    "remember_path_alias",
+                    "Save a user-approved local alias for an existing safe file or folder.",
+                    new()
+                    {
+                        ["alias"] = Schema("string", "The phrase the user wants to say later."),
+                        ["path"] = Schema("string", "The existing absolute file or folder path selected by the user."),
+                        ["kind"] = Schema("string", "file or folder."),
+                    },
+                    "alias",
+                    "path"),
+                FunctionDeclaration(
+                    "remember_link_alias",
+                    "Save a user-approved local alias for an http or https link.",
+                    new()
+                    {
+                        ["alias"] = Schema("string", "The phrase the user wants to say later."),
+                        ["url"] = Schema("string", "The absolute http or https URL."),
+                    },
+                    "alias",
+                    "url"),
+                FunctionDeclaration(
+                    "remember_workflow_alias",
+                    "Save a user-approved local alias for an existing workflow.",
+                    new()
+                    {
+                        ["alias"] = Schema("string", "The phrase the user wants to say later."),
+                        ["workflow_name"] = Schema("string", "The exact saved or built-in workflow name."),
+                    },
+                    "alias",
+                    "workflow_name"),
+                FunctionDeclaration(
+                    "list_learned_mappings",
+                    "List user-approved local app, file, folder, browser, workflow, and link mappings.",
+                    new()
+                    {
+                        ["include_all"] = Schema("boolean", "Set true to list mappings."),
+                    }),
+                FunctionDeclaration(
+                    "forget_learned_mapping",
+                    "Forget a local learned mapping by id or alias.",
+                    new()
+                    {
+                        ["id_or_alias"] = Schema("string", "Mapping id or alias."),
+                        ["kind"] = Schema("string", "Optional app, file, folder, browser, workflow, or link."),
+                    },
+                    "id_or_alias"),
+                FunctionDeclaration(
+                    "set_browser_preference",
+                    "Set a user-approved preferred browser for future links, or default to restore Windows default-browser behavior.",
+                    new()
+                    {
+                        ["browser"] = Schema("string", "default, chrome, edge, brave, firefox, opera, vivaldi, or arc."),
+                    },
+                    "browser"),
                 FunctionDeclaration(
                     "request_sensitive_action",
                     "Request local confirmation for a sensitive action. This does not execute it.",
