@@ -29,6 +29,7 @@ public sealed class JarvisAutomationService : IDisposable
     private readonly SmartFileSearchService _files;
     private readonly BrowserLauncherService _browsers;
     private readonly GeminiScreenGuidanceService _screenGuidance = new();
+    private readonly WebcamCaptureService _webcam = new();
     private readonly Action _openSettings;
     private readonly object _pendingLock = new();
     private readonly Dictionary<string, System.Threading.Timer> _timers = new(StringComparer.OrdinalIgnoreCase);
@@ -108,10 +109,11 @@ public sealed class JarvisAutomationService : IDisposable
                 GetString(args, "page"),
                 GetString(args, "query")),
             "open_camera" => OpenCamera(),
-            "take_photo" => TakePhoto(),
+            "take_photo" => await TakePhotoAsync(token),
             "take_screenshot" => TakeScreenshot(),
             "inspect_screen" => await InspectScreenAsync(GetString(args, "request"), token),
             "virtual_desktop_action" => VirtualDesktopAction(GetString(args, "action")),
+            "windows_recording_action" => WindowsRecordingAction(GetString(args, "action")),
             "open_gmail_draft" => OpenGmailDraft(
                 GetString(args, "recipient"),
                 GetString(args, "subject"),
@@ -122,6 +124,7 @@ public sealed class JarvisAutomationService : IDisposable
                 GetString(args, "phone_number")),
             "copy_text" => CopyText(GetString(args, "text")),
             "create_workflow" => CreateWorkflow(args),
+            "remember_routine" => RememberRoutine(args),
             "list_workflows" => ListWorkflows(),
             "run_workflow" => await RunWorkflowAsync(GetString(args, "name"), token),
             "delete_workflow" => DeleteWorkflow(GetString(args, "name")),
@@ -219,10 +222,12 @@ public sealed class JarvisAutomationService : IDisposable
         "take_screenshot" => "Capture and save the current screen",
         "inspect_screen" => "Inspect the current screen once with Gemini",
         "virtual_desktop_action" => $"{GetString(args, "action")} virtual desktop",
+        "windows_recording_action" => $"{GetString(args, "action")} Windows screen recording",
         "open_gmail_draft" => $"Prepare a Gmail draft for {GetString(args, "recipient")}",
         "prepare_whatsapp_message" => "Prepare a WhatsApp message",
         "copy_text" => "Copy prepared text to the clipboard",
         "create_workflow" => "Save a Jarvis workflow",
+        "remember_routine" => $"Remember the phrase {GetString(args, "trigger")} as a routine",
         "run_workflow" => $"Run the {GetString(args, "name")} workflow",
         "delete_workflow" => $"Delete the {GetString(args, "name")} workflow",
         "remember_app_alias" => $"Remember {GetString(args, "alias")} as {GetString(args, "app_name")}",
@@ -977,16 +982,31 @@ public sealed class JarvisAutomationService : IDisposable
 
     private Dictionary<string, object> OpenCamera()
     {
-        if (!TryStart("microsoft.windows.camera:"))
-            return Logged("open_camera", "", false, "Windows Camera could not be opened.", supported: false);
+        var resolution = _apps.Resolve("Camera", refresh: true);
+        var opened = resolution.Status == AppResolutionStatus.Found
+            && _apps.TryLaunch(resolution.Best, out _);
+        if (!opened)
+            opened = TryStart("microsoft.windows.camera:");
+        if (!opened)
+        {
+            return Logged(
+                "open_camera",
+                "",
+                false,
+                "Windows Camera could not be opened. Check that the Camera app is installed and camera access is enabled under Windows Settings > Privacy & security > Camera.",
+                supported: false,
+                extras: new() { ["settings_uri"] = "ms-settings:privacy-webcam" });
+        }
 
         return Logged(
             "open_camera",
             "Windows Camera",
             true,
-            "Opened Windows Camera. Automatic shutter control is not enabled; use the Camera button to take the photo.",
-            extras: new() { ["automatic_capture"] = false });
+            "Opened Windows Camera.",
+            extras: new() { ["automatic_capture"] = true });
     }
+
+    public Dictionary<string, object> OpenCameraFromSettings() => OpenCamera();
 
     private Dictionary<string, object> TakeScreenshot()
     {
@@ -1048,15 +1068,48 @@ public sealed class JarvisAutomationService : IDisposable
         }
     }
 
-    private Dictionary<string, object> TakePhoto()
+    public Task<Dictionary<string, object>> InspectScreenFromSettingsAsync(
+        string request,
+        CancellationToken token) =>
+        InspectScreenAsync(request, token);
+
+    private async Task<Dictionary<string, object>> TakePhotoAsync(CancellationToken token)
     {
-        var opened = OpenCamera();
-        opened["automatic_capture"] = false;
-        opened["photo_saved"] = false;
-        opened["message"] =
-            "Windows Camera is open, but automatic webcam shutter control is not enabled in this stable WinForms build. Use the visible Camera button to take the photo.";
-        return opened;
+        var result = await _webcam.CapturePhotoAsync(token);
+        if (!result.Success)
+        {
+            Models.KeyboardWtfState.SetUi(Models.VoiceUiPhase.Error, "Camera unavailable", result.Message);
+            return Logged(
+                "take_photo",
+                "",
+                false,
+                result.Message,
+                supported: false,
+                extras: new()
+                {
+                    ["automatic_capture"] = true,
+                    ["photo_saved"] = false,
+                    ["settings_uri"] = "ms-settings:privacy-webcam",
+                });
+        }
+
+        return Logged(
+            "take_photo",
+            result.Path,
+            true,
+            result.Message,
+            extras: new()
+            {
+                ["automatic_capture"] = true,
+                ["photo_saved"] = true,
+                ["path"] = result.Path,
+                ["camera_index"] = result.CameraIndex,
+                ["backend"] = result.Backend,
+            });
     }
+
+    public Task<Dictionary<string, object>> CapturePhotoFromSettingsAsync(CancellationToken token) =>
+        TakePhotoAsync(token);
 
     private Dictionary<string, object> VirtualDesktopAction(string action)
     {
@@ -1091,6 +1144,52 @@ public sealed class JarvisAutomationService : IDisposable
             "previous" or "previous desktop" or "switch previous" or "switch to previous desktop" => (byte)0x25,
             "close" or "close desktop" or "close current desktop" => (byte)0x73,
             _ => (byte)0,
+        };
+    }
+
+    private Dictionary<string, object> WindowsRecordingAction(string action)
+    {
+        var normalized = NormalizeWords(action);
+        var shortcut = WindowsRecordingShortcutForAction(normalized);
+        if (shortcut == null)
+        {
+            return Result(
+                false,
+                "Supported recording actions are start, stop, toggle, open Game Bar, and select a recording region.",
+                supported: false);
+        }
+
+        SendChord(shortcut);
+        var regionCapture = shortcut.SequenceEqual(new byte[] { 0x5B, 0x10, 0x52 });
+        var message = regionCapture
+            ? "Opened the Windows screen-region recording picker. Windows controls the selected area and save result."
+            : normalized is "open" or "open game bar" or "game bar"
+                ? "Opened Xbox Game Bar."
+                : "Recording shortcut sent. Xbox Game Bar controls whether recording actually starts or stops.";
+        return Logged(
+            "windows_recording_action",
+            normalized,
+            true,
+            message,
+            extras: new()
+            {
+                ["shortcut_sent"] = true,
+                ["verified_recording_state"] = false,
+                ["shortcut"] = regionCapture ? "Win+Shift+R" : shortcut.Length == 2 ? "Win+G" : "Win+Alt+R",
+            });
+    }
+
+    public static byte[] WindowsRecordingShortcutForAction(string action)
+    {
+        return NormalizeWords(action) switch
+        {
+            "start" or "stop" or "toggle" or "record" or "start recording" or "stop recording"
+                or "toggle recording" or "start screen recording" or "record my screen"
+                or "start windows recording" or "use game bar recording" => [0x5B, 0x12, 0x52],
+            "open" or "open game bar" or "game bar" => [0x5B, 0x47],
+            "region" or "record region" or "select region" or "record screen region"
+                or "snipping tool recording" => [0x5B, 0x10, 0x52],
+            _ => null,
         };
     }
 
@@ -1285,6 +1384,34 @@ public sealed class JarvisAutomationService : IDisposable
             GetString(args, "urls"),
             GetString(args, "folder"));
         return Logged("create_workflow", workflow.Name, true, $"Saved workflow {workflow.Name}.");
+    }
+
+    private Dictionary<string, object> RememberRoutine(JsonElement args)
+    {
+        var trigger = CleanRoutineTrigger(GetString(args, "trigger") ?? GetString(args, "name"));
+        if (string.IsNullOrWhiteSpace(trigger))
+            return Result(false, "What phrase should trigger the routine?", needsClarification: true);
+
+        var workflow = _settings.SaveWorkflow(
+            trigger,
+            GetString(args, "apps"),
+            GetString(args, "urls"),
+            GetString(args, "folder"));
+        var mapping = _mappings.Remember(
+            LearnedMappingKind.Workflow,
+            trigger,
+            workflow.Name,
+            workflow.Name);
+        return Logged(
+            "remember_routine",
+            trigger,
+            true,
+            $"Saved the routine. Say {trigger} to run it.",
+            extras: new()
+            {
+                ["workflow"] = new { workflow.Name, workflow.Apps, workflow.Urls, workflow.Folder },
+                ["mapping"] = PublicMapping(mapping),
+            });
     }
 
     private Dictionary<string, object> ListWorkflows() =>
@@ -1520,6 +1647,18 @@ public sealed class JarvisAutomationService : IDisposable
     private JarvisWorkflowSettings FindWorkflow(string name)
     {
         var learned = _mappings.FindExact(LearnedMappingKind.Workflow, name);
+        learned ??= _mappings.Search(name, LearnedMappingKind.Workflow, 2)
+            .Select(entry => new
+            {
+                Entry = entry,
+                Score = Math.Max(
+                    FuzzyMatcher.Score(name, entry.Alias),
+                    FuzzyMatcher.Score(name, entry.DisplayName)),
+            })
+            .Where(item => item.Score >= 0.78)
+            .OrderByDescending(item => item.Score)
+            .Select(item => item.Entry)
+            .FirstOrDefault();
         if (learned != null)
             name = learned.Target;
         var normalized = NormalizeWords(name);
@@ -1527,14 +1666,19 @@ public sealed class JarvisAutomationService : IDisposable
             string.Equals(NormalizeWords(w.Name), normalized, StringComparison.OrdinalIgnoreCase));
         if (saved != null)
             return saved;
-        saved = _settings.Current.JarvisWorkflows?
-            .Select(workflow => new { Workflow = workflow, Score = FuzzyMatcher.Score(normalized, workflow.Name) })
-            .Where(item => item.Score >= 0.82)
+        var ranked = _settings.Current.JarvisWorkflows?
+            .Select(workflow => (Workflow: workflow, Score: FuzzyMatcher.Score(normalized, workflow.Name)))
+            .Where(item => item.Score >= 0.72)
             .OrderByDescending(item => item.Score)
-            .Select(item => item.Workflow)
-            .FirstOrDefault();
-        if (saved != null)
-            return saved;
+            .Take(2)
+            .ToArray() ?? Array.Empty<(JarvisWorkflowSettings Workflow, double Score)>();
+        if (ranked.Length > 0)
+        {
+            var top = ranked[0];
+            var secondScore = ranked.Length > 1 ? ranked[1].Score : 0;
+            if (top.Score >= 0.9 || top.Score - secondScore >= 0.08)
+                return top.Workflow;
+        }
         return normalized switch
         {
             "coding mode" => new JarvisWorkflowSettings
@@ -1607,6 +1751,24 @@ public sealed class JarvisAutomationService : IDisposable
     private static string NormalizeWords(string text) =>
         string.Join(" ", (text ?? "").Trim().ToLowerInvariant()
             .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+    private static string CleanRoutineTrigger(string value)
+    {
+        var trigger = NormalizePhraseText(value);
+        foreach (var prefix in new[]
+        {
+            "whenever i say ", "when i say ", "remember that whenever i say ",
+            "remember whenever i say ", "remember this as ",
+        })
+        {
+            if (trigger.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                trigger = trigger[prefix.Length..].Trim();
+                break;
+            }
+        }
+        return Limit(trigger, 48);
+    }
 
     private static string NormalizePhraseText(string text)
     {

@@ -18,6 +18,9 @@ public sealed class VoiceCaptureService
     private CancellationTokenSource _processingCts;
     private Func<string, Task> _completionHandler;
     private bool _preferFastRecognition;
+    private VoskStreamingSession _streamingSession;
+    private DateTime _lastPreviewUtc;
+    private string _lastPreview = "";
     private int _autoCompleteInProgress;
     private int _operationId;
 
@@ -52,7 +55,16 @@ public sealed class VoiceCaptureService
             return false;
         }
 
-        _audioRecorder.StartRecording();
+        StartLivePreview();
+        try
+        {
+            _audioRecorder.StartRecording();
+        }
+        catch
+        {
+            StopLivePreview();
+            throw;
+        }
         KeyboardWtfState.IsRecording = true;
         KeyboardWtfState.CurrentRecordingMode = mode;
         KeyboardWtfState.ActiveQuickSendTarget = quickTarget;
@@ -84,6 +96,7 @@ public sealed class VoiceCaptureService
         _silenceCts?.Cancel();
         var mode = KeyboardWtfState.CurrentRecordingMode;
         var wavData = _audioRecorder.StopRecording();
+        StopLivePreview();
         KeyboardWtfState.IsRecording = false;
         KeyboardWtfState.CurrentRecordingMode = RecordingMode.None;
         KeyboardWtfState.ActiveQuickSendTarget = null;
@@ -175,6 +188,7 @@ public sealed class VoiceCaptureService
         if (KeyboardWtfState.IsRecording)
         {
             _audioRecorder.StopRecording();
+            StopLivePreview();
             KeyboardWtfState.IsRecording = false;
         }
 
@@ -389,6 +403,50 @@ public sealed class VoiceCaptureService
         RecordingMode.QuickSend => "Quick send",
         _ => "Listening",
     };
+
+    private void StartLivePreview()
+    {
+        StopLivePreview();
+        _streamingSession = _speechRecognition.CreateStreamingSession();
+        if (_streamingSession == null)
+            return;
+
+        _lastPreview = "";
+        _lastPreviewUtc = DateTime.MinValue;
+        _audioRecorder.PcmDataAvailable += OnPcmDataAvailable;
+    }
+
+    private void OnPcmDataAvailable(byte[] buffer, int count)
+    {
+        try
+        {
+            var preview = _streamingSession?.AcceptPcm(buffer, count) ?? "";
+            if (string.IsNullOrWhiteSpace(preview)
+                || string.Equals(preview, _lastPreview, StringComparison.Ordinal)
+                || DateTime.UtcNow - _lastPreviewUtc < TimeSpan.FromMilliseconds(180))
+                return;
+
+            _lastPreview = preview;
+            _lastPreviewUtc = DateTime.UtcNow;
+            KeyboardWtfState.SetUi(
+                VoiceUiPhase.Listening,
+                ModeTitle(KeyboardWtfState.CurrentRecordingMode),
+                preview);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning(ex, "Live Vosk preview failed");
+            StopLivePreview();
+        }
+    }
+
+    private void StopLivePreview()
+    {
+        _audioRecorder.PcmDataAvailable -= OnPcmDataAvailable;
+        _streamingSession?.Dispose();
+        _streamingSession = null;
+        _lastPreview = "";
+    }
 
     private static bool IsMicrophoneAvailable(out string reason)
     {

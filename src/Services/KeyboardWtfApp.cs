@@ -80,7 +80,8 @@ public sealed class KeyboardWtfApp : IDisposable
             _hotkeys,
             _intentMemory,
             _jarvisHistory,
-            _learnedMappings);
+            _learnedMappings,
+            _jarvisAutomation);
         WebSettingsService.Instance.Start();
 
         _hotkeys.RegistrationFailed += (name, reason) => _notifications.Warning("Hotkey unavailable", $"{name}: {reason}");
@@ -273,12 +274,27 @@ public sealed class KeyboardWtfApp : IDisposable
         if (!current.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
             return current;
 
+        var installed = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Programs",
+            "keyboard.wtf",
+            "keyboard.wtf.exe");
+        if (File.Exists(installed))
+            return installed;
+
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         for (var i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
         {
-            var candidate = Path.Combine(dir.FullName, "dist", "keyboard-wtf-win-x64", "keyboard.wtf.exe");
-            if (File.Exists(candidate))
-                return candidate;
+            foreach (var relative in new[]
+            {
+                Path.Combine("dist", "release", "keyboard-wtf-win-x64", "keyboard.wtf.exe"),
+                Path.Combine("dist", "keyboard-wtf-win-x64", "keyboard.wtf.exe"),
+            })
+            {
+                var candidate = Path.Combine(dir.FullName, relative);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
         }
 
         return current;

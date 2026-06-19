@@ -8,9 +8,11 @@
     <Nullable>disable</Nullable>
     <RootNamespace>KeyboardWtf</RootNamespace>
     <AssemblyName>keyboard.wtf</AssemblyName>
-    <Version>1.1.0</Version>
-    <FileVersion>1.1.0.0</FileVersion>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <Version>1.2.0</Version>
+    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationIcon />
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
@@ -39,6 +41,7 @@
     <PackageReference Include="Whisper.net" Version="1.9.*" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.*" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <PackageReference Include="OpenCvSharp4.Windows" Version="4.13.0.20260602" />
   </ItemGroup>
 
   <Target Name="CopyWhisperNative" AfterTargets="Build" Condition="$(OS) == 'Windows_NT'">

@@ -13,7 +13,8 @@ keyboard.wtf favors verified actions over brittle UI clicking. Every tool must r
 | YouTube | Open Liked Videos, Subscriptions, or History |
 | Amazon | Open an Amazon India product search |
 | Camera | Open Windows Camera after confirmation |
-| Capture | Save a desktop screenshot after confirmation |
+| Capture | One-shot Gemini screen guidance, desktop screenshots, and webcam photos |
+| Windows recording | Xbox Game Bar toggle and Windows screen-region recording shortcuts |
 | Productivity | Notes, to-dos, timers, selected text, clipboard, file search, and workflows |
 | System | Volume, mute, settings pages, battery, charging, uptime, OS, machine, and user status |
 
@@ -22,7 +23,8 @@ keyboard.wtf favors verified actions over brittle UI clicking. Every tool must r
 - Spotify direct playback requires a Spotify developer app, OAuth, the `user-modify-playback-state` scope, an active playback device, and Spotify Premium.
 - Removing YouTube likes is available through `videos.rate` with `rating=none`, but requires Google OAuth and a known video ID. Bulk changes must show a preview and require confirmation.
 - Discord messaging requires a registered Discord app or Social SDK integration, OAuth communication scopes, and a stable Discord user ID. Standard user-account self-bot automation is not allowed.
-- Automatic photo capture should use an owned camera UI through Windows App SDK `CameraCaptureUI` or a carefully packaged capture engine. The current WinForms build opens Windows Camera but does not fake a shutter press.
+- Webcam photos use a one-shot OpenCV capture after the user's explicit request and save under `Pictures\keyboard.wtf\Camera`. Windows desktop camera privacy access remains authoritative.
+- `Win+Alt+R` is a toggle owned by Xbox Game Bar. keyboard.wtf can send it but cannot independently prove the resulting recording state.
 
 ## Requires A Browser Companion
 

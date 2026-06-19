@@ -49,6 +49,8 @@ public sealed class AppResolverServiceTests : IDisposable
     [InlineData("spotfy", "Spotify")]
     [InlineData("aple music", "Apple Music")]
     [InlineData("visual code", "Visual Studio Code")]
+    [InlineData("xbox game bar", "Game Bar")]
+    [InlineData("windows camera", "Camera")]
     public void NaturalNameTyposCanonicalize(string query, string expected)
     {
         Assert.Equal(expected, AppResolverService.CanonicalizeNaturalName(query));

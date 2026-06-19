@@ -681,7 +681,7 @@
           <option value="AlwaysAsk">Ask before routine actions</option>
           <option value="AutoExecute">Auto-execute routine actions</option>
         </select>
-        <div class="hint">Camera, screen inspection, screenshots, virtual-desktop closing, lock, sleep, restart, shutdown, and disabling Wi-Fi always require confirmation. Normal window closing follows the selected permission mode.</div>
+        <div class="hint">Ask mode confirms actions. Auto-execute runs explicit routine and privacy actions visibly without a second internal prompt. Windows camera and microphone controls are never bypassed.</div>
       </div>
 
       <div class="field">
@@ -706,8 +706,18 @@
           <div class="setup-item"><div class="setup-label">Screen guidance</div><div class="setup-value" id="featureScreenGuidance">Checking...</div></div>
           <div class="setup-item"><div class="setup-label">Camera</div><div class="setup-value" id="featureCamera">Checking...</div></div>
           <div class="setup-item"><div class="setup-label">Virtual desktops</div><div class="setup-value" id="featureVirtualDesktops">Checking...</div></div>
+          <div class="setup-item"><div class="setup-label">Windows recording</div><div class="setup-value" id="featureWindowsRecording">Checking...</div></div>
+          <div class="setup-item"><div class="setup-label">Live dictation</div><div class="setup-value" id="featureLiveDictation">Checking...</div></div>
+          <div class="setup-item"><div class="setup-label">Saved routines</div><div class="setup-value" id="featureRoutineMemory">Checking...</div></div>
         </div>
-        <div class="hint">Screen inspection is one-shot, always asks first, and keeps the captured image in memory only. Camera opening is supported; automatic shutter capture remains disabled until a stable owned capture path ships.</div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="ghost" id="cameraOpenBtn" onclick="openWindowsCamera()">Open Windows Camera</button>
+          <button class="ghost" id="cameraTestBtn" onclick="testCameraCapture()">Test camera photo</button>
+          <button class="ghost" id="screenTestBtn" onclick="testScreenGuidance()">Test screen guidance</button>
+          <span class="hint" id="cameraTestResult" style="margin:0"></span>
+        </div>
+        <div class="hint" id="screenTestResult"></div>
+        <div class="hint">Screen inspection is one-shot and keeps the captured image in memory only. Camera tests capture one visible, user-requested photo under Pictures\keyboard.wtf\Camera and respect Windows desktop camera access.</div>
       </div>
 
       <div class="field">
@@ -716,7 +726,7 @@
           <button onclick="stopJarvis()">Stop Jarvis now</button>
           <span class="hint" id="pendingActionText" style="margin:0">No action pending.</span>
         </div>
-        <div class="hint">In Ask mode, routine actions including window closing require confirmation. In Auto-execute mode, normal window closing is immediate; shutdown, restart, sleep, lock, Wi-Fi disable, camera, and screen inspection remain gated.</div>
+        <div class="hint">In Ask mode, actions require confirmation. In Auto-execute mode, explicit camera, screen, screenshot, recording, app, browser, file, and routine requests run without another internal prompt. Shutdown, restart, sleep, lock, Wi-Fi disable, and closing a virtual desktop remain gated.</div>
       </div>
 
       <div class="field">
@@ -1427,9 +1437,15 @@ function renderFeatureStatus(status) {
   document.getElementById('featureScreenGuidance').textContent =
     status.screenGuidance || 'Unavailable';
   document.getElementById('featureCamera').textContent =
-    status.cameraCapture || 'Manual shutter only';
+    status.cameraCapture || 'Unavailable';
   document.getElementById('featureVirtualDesktops').textContent =
     status.virtualDesktops || 'Unavailable';
+  document.getElementById('featureWindowsRecording').textContent =
+    status.windowsRecording || 'Unavailable';
+  document.getElementById('featureLiveDictation').textContent =
+    status.liveDictation || 'Unavailable';
+  document.getElementById('featureRoutineMemory').textContent =
+    status.routineMemory || 'Unavailable';
 }
 
 function renderActiveHotkeys(configured, active) {
@@ -2081,6 +2097,69 @@ async function stopMicTest() {
   btn.textContent = 'Test microphone';
   btn.classList.add('ghost');
   level.style.width = '0%';
+}
+
+async function testCameraCapture() {
+  const btn = document.getElementById('cameraTestBtn');
+  const result = document.getElementById('cameraTestResult');
+  btn.disabled = true;
+  result.textContent = 'Opening camera...';
+  try {
+    const resp = await fetch('/api/camera-test', {
+      method: 'POST',
+      headers: { 'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action' }
+    });
+    const data = await resp.json();
+    result.textContent = data.ok
+      ? `Photo saved: ${data.path || data.message || 'Pictures\\keyboard.wtf\\Camera'}`
+      : `Camera unavailable: ${data.error || data.message || 'Check Windows camera privacy settings.'}`;
+  } catch (e) {
+    result.textContent = 'Camera test failed: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function openWindowsCamera() {
+  const btn = document.getElementById('cameraOpenBtn');
+  const result = document.getElementById('cameraTestResult');
+  btn.disabled = true;
+  result.textContent = 'Opening Windows Camera...';
+  try {
+    const resp = await fetch('/api/camera-open', {
+      method: 'POST',
+      headers: { 'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action' }
+    });
+    const data = await resp.json();
+    result.textContent = data.ok
+      ? (data.message || 'Windows Camera opened.')
+      : `Camera unavailable: ${data.error || data.message || 'Check Windows camera privacy settings.'}`;
+  } catch (e) {
+    result.textContent = 'Camera open failed: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function testScreenGuidance() {
+  const btn = document.getElementById('screenTestBtn');
+  const result = document.getElementById('screenTestResult');
+  btn.disabled = true;
+  result.textContent = 'Capturing one screen image and asking Gemini...';
+  try {
+    const resp = await fetch('/api/screen-guidance-test', {
+      method: 'POST',
+      headers: { 'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action' }
+    });
+    const data = await resp.json();
+    result.textContent = data.ok
+      ? (data.guidance || data.message || 'Screen guidance completed.')
+      : `Screen guidance unavailable: ${data.error || data.message || 'Check the Gemini API key.'}`;
+  } catch (e) {
+    result.textContent = 'Screen guidance test failed: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function pollMicLevel() {

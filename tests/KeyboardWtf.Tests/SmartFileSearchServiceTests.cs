@@ -84,6 +84,53 @@ public sealed class SmartFileSearchServiceTests : IDisposable
         Assert.Equal(folder, result.Best.Path);
     }
 
+    [Fact]
+    public async Task UsesFuzzyLearnedFolderAlias()
+    {
+        var folder = Path.Combine(_root, "nested", "project screenshots");
+        _mappings.Remember(LearnedMappingKind.Folder, "hackathon assets", folder, "Project screenshots");
+        var service = new SmartFileSearchService(_mappings, [(_root, "Test", 10)]);
+
+        var result = await service.SearchAsync(
+            "hackaton asset",
+            "",
+            includeFiles: false,
+            includeFolders: true,
+            CancellationToken.None);
+
+        Assert.Equal(FileResolutionStatus.Found, result.Status);
+        Assert.Equal(folder, result.Best.Path);
+    }
+
+    [Fact]
+    public async Task BreadthFirstSearchFindsMatchOutsideLargeFirstFolder()
+    {
+        var noisy = Path.Combine(_root, "a-noisy");
+        var targetRoot = Path.Combine(_root, "z-target");
+        Directory.CreateDirectory(noisy);
+        Directory.CreateDirectory(targetRoot);
+        for (var i = 0; i < 1200; i++)
+            File.WriteAllText(Path.Combine(noisy, $"noise-{i:D4}.txt"), "test");
+        var target = Path.Combine(targetRoot, "keyboard-demo-video.mp4");
+        File.WriteAllText(target, "test");
+        var service = new SmartFileSearchService(
+            _mappings,
+            [(noisy, "Noisy", 10), (targetRoot, "Target", 9)]);
+
+        var result = await service.SearchAsync(
+            "keyboard demo video",
+            "",
+            includeFiles: true,
+            includeFolders: false,
+            CancellationToken.None,
+            maxDepth: 2,
+            maxResults: 5,
+            timeout: TimeSpan.FromSeconds(2));
+
+        Assert.NotEqual(FileResolutionStatus.NotFound, result.Status);
+        Assert.Equal(target, result.Best.Path);
+    }
+
     public void Dispose()
     {
         try

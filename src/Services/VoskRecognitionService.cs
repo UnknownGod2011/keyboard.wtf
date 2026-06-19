@@ -66,6 +66,9 @@ public sealed class VoskRecognitionService : IDisposable
         }
     }
 
+    public VoskStreamingSession CreateStreamingSession(int sampleRate) =>
+        _model == null ? null : new VoskStreamingSession(_model, sampleRate);
+
     private static string ExtractText(string json)
     {
         try
@@ -89,5 +92,67 @@ public sealed class VoskRecognitionService : IDisposable
         _disposed = true;
         _model?.Dispose();
         _model = null;
+    }
+}
+
+public sealed class VoskStreamingSession : IDisposable
+{
+    private readonly object _lock = new();
+    private readonly VoskRecognizer _recognizer;
+    private readonly List<string> _committed = new();
+    private bool _disposed;
+
+    internal VoskStreamingSession(Model model, int sampleRate)
+    {
+        _recognizer = new VoskRecognizer(model, sampleRate);
+    }
+
+    public string AcceptPcm(byte[] buffer, int count)
+    {
+        if (_disposed || buffer == null || count <= 0)
+            return "";
+
+        lock (_lock)
+        {
+            if (_disposed)
+                return "";
+
+            var hasResult = _recognizer.AcceptWaveform(buffer, count);
+            var json = hasResult ? _recognizer.Result() : _recognizer.PartialResult();
+            var text = Extract(json, hasResult ? "text" : "partial");
+            if (hasResult && !string.IsNullOrWhiteSpace(text))
+                _committed.Add(text);
+
+            return string.Join(
+                " ",
+                _committed.Append(hasResult ? "" : text)
+                    .Where(part => !string.IsNullOrWhiteSpace(part)));
+        }
+    }
+
+    private static string Extract(string json, string property)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty(property, out var value)
+                ? value.GetString()?.Trim() ?? ""
+                : "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            _recognizer.Dispose();
+        }
     }
 }

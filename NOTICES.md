@@ -93,3 +93,22 @@ https://github.com/dotnet/runtime
 
 Licensed under the MIT License. See NAudio license text above for the full MIT License terms.
 
+---
+
+## OpenCvSharp
+
+Version 4.13.0
+Copyright 2008 shimat and contributors
+https://github.com/shimat/opencvsharp
+
+Licensed under the Apache License, Version 2.0. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0
+
+---
+
+## OpenCV
+
+Version 4.13.0
+Copyright OpenCV contributors
+https://github.com/opencv/opencv
+
+Licensed under the Apache License, Version 2.0. You may obtain a copy of the License at https://www.apache.org/licenses/LICENSE-2.0

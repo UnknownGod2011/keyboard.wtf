@@ -28,6 +28,7 @@ public sealed class WebSettingsService : IDisposable
     private IntentMemoryService _intentMemory;
     private JarvisActionHistoryService _jarvisHistory;
     private LearnedMappingService _learnedMappings;
+    private JarvisAutomationService _jarvisAutomation;
     private string _settingsHtml;
 
     // Live microphone meter state
@@ -61,7 +62,8 @@ public sealed class WebSettingsService : IDisposable
         HotkeyService hotkeys,
         IntentMemoryService intentMemory,
         JarvisActionHistoryService jarvisHistory,
-        LearnedMappingService learnedMappings)
+        LearnedMappingService learnedMappings,
+        JarvisAutomationService jarvisAutomation)
     {
         _app = app;
         _settings = settings;
@@ -69,6 +71,7 @@ public sealed class WebSettingsService : IDisposable
         _intentMemory = intentMemory;
         _jarvisHistory = jarvisHistory;
         _learnedMappings = learnedMappings;
+        _jarvisAutomation = jarvisAutomation;
         _settingsHtml = LoadSettingsHtml();
     }
 
@@ -223,6 +226,44 @@ public sealed class WebSettingsService : IDisposable
             else if (path == "/api/mic-test-stop" && method == "POST")
             {
                 await StopLiveMicTest(resp);
+            }
+            else if (path == "/api/camera-test" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = "Settings action header required." }));
+                    return;
+                }
+                await RunCameraTest(resp);
+            }
+            else if (path == "/api/camera-open" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = "Settings action header required." }));
+                    return;
+                }
+                await WriteJson(
+                    resp,
+                    JsonSerializer.Serialize(
+                        _jarvisAutomation?.OpenCameraFromSettings()
+                        ?? new Dictionary<string, object>
+                        {
+                            ["ok"] = false,
+                            ["message"] = "Camera service is unavailable.",
+                        }));
+            }
+            else if (path == "/api/screen-guidance-test" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = "Settings action header required." }));
+                    return;
+                }
+                await RunScreenGuidanceTest(resp);
             }
             else if (path == "/api/download-models" && method == "POST")
             {
@@ -388,9 +429,16 @@ public sealed class WebSettingsService : IDisposable
                 browserTargeting = "Available",
                 screenGuidance = string.IsNullOrWhiteSpace(KeyboardWtfState.GeminiApiKey)
                     ? "Needs Gemini API key"
-                    : "Available with confirmation",
-                cameraCapture = "Manual shutter only",
+                    : (_settings?.Current.JarvisPermissionMode == JarvisPermissionMode.AutoExecute
+                        ? "Available in auto-execute"
+                        : "Available with confirmation"),
+                cameraCapture = "One-shot photo capture available",
                 virtualDesktops = "Available",
+                windowsRecording = "Game Bar + region shortcuts available",
+                liveDictation = _app?.SpeechRecognition?.IsVoskLoaded == true
+                    ? "Live partial transcript available"
+                    : "Final transcript available; Vosk enables live preview",
+                routineMemory = "Saved trigger phrases available",
             }
         };
 
@@ -1058,6 +1106,54 @@ public sealed class WebSettingsService : IDisposable
         await WriteJson(resp, "{\"ok\":true}");
     }
 
+    private async Task RunCameraTest(HttpListenerResponse resp)
+    {
+        if (_jarvisAutomation == null)
+        {
+            await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = "Camera service is unavailable." }));
+            return;
+        }
+
+        try
+        {
+            var result = await _jarvisAutomation.CapturePhotoFromSettingsAsync(_cts?.Token ?? CancellationToken.None);
+            await WriteJson(resp, JsonSerializer.Serialize(result));
+        }
+        catch (OperationCanceledException)
+        {
+            await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = "Camera test cancelled." }));
+        }
+        catch (Exception ex)
+        {
+            await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = ex.Message }));
+        }
+    }
+
+    private async Task RunScreenGuidanceTest(HttpListenerResponse resp)
+    {
+        if (_jarvisAutomation == null)
+        {
+            await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = "Screen guidance is unavailable." }));
+            return;
+        }
+
+        try
+        {
+            var result = await _jarvisAutomation.InspectScreenFromSettingsAsync(
+                "Briefly describe the visible screen and identify the safest next action. Do not repeat private values.",
+                _cts?.Token ?? CancellationToken.None);
+            await WriteJson(resp, JsonSerializer.Serialize(result));
+        }
+        catch (OperationCanceledException)
+        {
+            await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = "Screen guidance test cancelled." }));
+        }
+        catch (Exception ex)
+        {
+            await WriteJson(resp, JsonSerializer.Serialize(new { ok = false, error = ex.Message }));
+        }
+    }
+
     private void StopLiveMicInternal()
     {
         lock (_liveMicLock)
@@ -1089,6 +1185,12 @@ public sealed class WebSettingsService : IDisposable
         await resp.OutputStream.WriteAsync(buffer);
         resp.Close();
     }
+
+    private static bool HasSettingsActionHeader(HttpListenerRequest request) =>
+        string.Equals(
+            request.Headers["X-Keyboard-Wtf-Settings-Action"],
+            "explicit-user-action",
+            StringComparison.Ordinal);
 
     private async Task PreviewFilenameEndpoint(HttpListenerRequest req, HttpListenerResponse resp)
     {

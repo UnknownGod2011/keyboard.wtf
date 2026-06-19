@@ -112,7 +112,14 @@ public sealed class SettingsService
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "keyboard.wtf");
 
-    public string SettingsPath { get; } = Path.Combine(AppDataDir, "settings.json");
+    public SettingsService(string settingsPath = null)
+    {
+        SettingsPath = string.IsNullOrWhiteSpace(settingsPath)
+            ? Path.Combine(AppDataDir, "settings.json")
+            : settingsPath;
+    }
+
+    public string SettingsPath { get; }
 
     public AppSettings Current { get; private set; } = new();
 

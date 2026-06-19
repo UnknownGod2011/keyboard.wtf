@@ -17,6 +17,8 @@ public sealed class SpeechRecognitionService : IDisposable
 
     public void LoadVoskModel(string modelPath) => _vosk.LoadModel(modelPath);
     public void LoadWhisperModel(string modelPath) => _whisper.LoadModel(modelPath);
+    public VoskStreamingSession CreateStreamingSession(int sampleRate = 16000) =>
+        _vosk.CreateStreamingSession(sampleRate);
 
     public async Task<string> RecognizeFromWavAsync(
         byte[] wavData,

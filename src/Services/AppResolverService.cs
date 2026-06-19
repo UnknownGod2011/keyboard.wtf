@@ -48,6 +48,10 @@ public sealed class AppResolverService
         ["discord"] = "Discord",
         ["figma"] = "Figma",
         ["notion"] = "Notion",
+        ["camera"] = "Camera",
+        ["windows camera"] = "Camera",
+        ["game bar"] = "Game Bar",
+        ["xbox game bar"] = "Game Bar",
     };
 
     private static readonly Dictionary<string, string[]> KnownExecutables = new(StringComparer.OrdinalIgnoreCase)

@@ -32,4 +32,28 @@ public sealed class JarvisShortcutTests
     {
         Assert.Equal((byte)expected, JarvisAutomationService.VirtualDesktopKeyForAction(action));
     }
+
+    [Theory]
+    [InlineData("start recording", 3, 0x12)]
+    [InlineData("stop recording", 3, 0x12)]
+    [InlineData("open game bar", 2, 0x47)]
+    [InlineData("record screen region", 3, 0x10)]
+    public void RecordingActionsMapOnlyToAllowlistedWindowsShortcuts(
+        string action,
+        int expectedLength,
+        int expectedModifier)
+    {
+        var keys = JarvisAutomationService.WindowsRecordingShortcutForAction(action);
+
+        Assert.NotNull(keys);
+        Assert.Equal(expectedLength, keys.Length);
+        Assert.Equal(0x5B, keys[0]);
+        Assert.Equal(expectedModifier, keys[1]);
+    }
+
+    [Fact]
+    public void UnknownRecordingActionHasNoShortcut()
+    {
+        Assert.Null(JarvisAutomationService.WindowsRecordingShortcutForAction("upload recording"));
+    }
 }

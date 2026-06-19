@@ -10,12 +10,45 @@ public sealed class JarvisPermissionPolicyTests
     [InlineData("take_screenshot", "")]
     [InlineData("take_photo", "")]
     [InlineData("open_camera", "")]
-    [InlineData("virtual_desktop_action", "close")]
-    public void PrivacyAndDestructiveDesktopActionsAlwaysAsk(string tool, string action)
+    public void ExplicitPrivacyActionsAutoExecuteWhenModeAllowsIt(string tool, string action)
+    {
+        Assert.False(JarvisPermissionPolicy.RequiresConfirmation(
+            tool,
+            action,
+            "",
+            JarvisPermissionMode.AutoExecute));
+    }
+
+    [Theory]
+    [InlineData("inspect_screen", "")]
+    [InlineData("take_screenshot", "")]
+    [InlineData("take_photo", "")]
+    [InlineData("open_camera", "")]
+    public void ExplicitPrivacyActionsAskInAlwaysAskMode(string tool, string action)
     {
         Assert.True(JarvisPermissionPolicy.RequiresConfirmation(
             tool,
             action,
+            "",
+            JarvisPermissionMode.AlwaysAsk));
+    }
+
+    [Fact]
+    public void ClosingVirtualDesktopAlwaysAsks()
+    {
+        Assert.True(JarvisPermissionPolicy.RequiresConfirmation(
+            "virtual_desktop_action",
+            "close",
+            "",
+            JarvisPermissionMode.AutoExecute));
+    }
+
+    [Fact]
+    public void WindowsRecordingAutoExecutes()
+    {
+        Assert.False(JarvisPermissionPolicy.RequiresConfirmation(
+            "windows_recording_action",
+            "toggle",
             "",
             JarvisPermissionMode.AutoExecute));
     }

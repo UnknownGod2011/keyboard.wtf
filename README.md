@@ -17,28 +17,30 @@ The keyboard becomes the trigger, not the main input method.
 - A top-center voice orb shows real listening level, transcription, Gemini thinking, execution, speaking, completion, cancellation, and errors without stealing focus.
 - Offline speech recognition with Vosk and Whisper model support.
 - Fast Vosk path for interactive hotkeys, with Whisper available for accuracy-focused transcription.
+- Live Vosk partial transcripts appear in the voice orb while the microphone is active; final delivery still uses the completed local transcript.
 - Flow-like smart writing that removes fillers and false starts, honors corrections, adds punctuation, and types polished text into the active app.
 - Jarvis mode combines Gemini Live conversation with allowlisted desktop, window, browser, file, clipboard, productivity, workflow, and system tools.
 - Start with Windows is enabled for new installs. The tray app, hotkeys, local settings, memory, models, and background services reload after sign-in, with a single-instance guard.
-- Choose Ask before routine actions or Auto-execute routine actions in Settings. New users default to Ask; privacy-sensitive and irreversible actions always require confirmation.
+- Choose Ask before routine actions or Auto-execute routine actions in Settings. Ask confirms actions; Auto-execute runs explicit app, browser, file, camera, screen, recording, and routine requests without a second internal prompt. Windows permissions are never bypassed.
 - Gemini Live bidirectional voice conversation with server-side voice activity detection, interruption support, and auto-end phrases.
 - Selectable Gemini Live voices in Settings. Jarvis speech comes directly from Gemini; offline Read Back remains on Piper with Windows SAPI fallback.
 - Local intent memory with a 20-entry cap, saved only when the user explicitly asks, and manageable from settings.
 - Custom assistant name, voice, and four tone options in settings.
 - Resolve approximate or misspelled app names from Windows Start Apps, Start Menu shortcuts, registered App Paths, and trusted application locations. Low-confidence matches are presented for selection instead of guessed.
-- Fuzzy-search safe files and folders under Desktop, Downloads, Documents, Pictures, Videos, Music, OneDrive, and user-approved learned folders with bounded depth, result count, scan count, timeout, and cancellation.
+- Fuzzy-search safe files and folders with breadth-first coverage across Desktop, Downloads, Documents, Pictures, Videos, Music, OneDrive, screenshot/camera/recording folders, and user-approved learned folders. Search remains bounded by depth, result count, scan count, timeout, and cancellation.
 - Save user-approved local aliases for apps, files, folders, links, workflows, and browser preference. Learned mappings are bounded to 80 entries and can be removed in Settings.
 - Open links and web searches in Chrome, Edge, Brave, Firefox, Opera, Vivaldi, or Arc when that installed browser is explicitly requested. Jarvis does not silently substitute a different browser.
 - Inspect one user-approved screen capture in memory with Gemini vision and return text guidance. The capture is not written to disk and Jarvis does not click or type automatically.
 - Create, switch, and close Windows virtual desktops through allowlisted Windows shortcuts. Closing a desktop always requires confirmation.
+- Start, stop, or toggle Xbox Game Bar recording with `Win+Alt+R`, open Game Bar, or open the Windows screen-region recorder. keyboard.wtf reports that the shortcut was sent because Windows owns the actual recording state.
 - Open common apps, switch/minimize/maximize windows, and open known folders or safe local documents.
 - Control active Chrome, Edge, Firefox, Brave, Opera, Vivaldi, or Arc tabs: new, close, switch, reopen, refresh, back, forward, downloads, history, and find.
 - Use active-window, selected-text, and clipboard context for requests such as "summarize this," "explain this," or "make this professional."
 - Search file and folder names, save notes, manage a local to-do list, and set in-app timers.
-- Create reusable workflows from app names, safe URLs, and folders. Coding, study, and hackathon modes are included.
+- Create reusable workflows from app names, safe URLs, and folders. A single "whenever I say..." command now saves the trigger and routine atomically, and fuzzy variants such as "initialize my set" can resolve "initialize my setup."
 - Change volume or mute directly, and open Wi-Fi, Bluetooth, display, and sound settings.
 - Open Spotify or YouTube searches, Spotify Liked Songs, YouTube Liked Videos/Subscriptions/History, Amazon product searches, and Discord home.
-- Open Windows Camera with a privacy confirmation, or save a desktop screenshot under `Pictures\keyboard.wtf\Screenshots`. Automatic webcam shutter capture is not enabled; photo requests open Camera for a manual shutter press.
+- Open Windows Camera, capture one permission-gated webcam photo under `Pictures\keyboard.wtf\Camera`, or save a desktop screenshot under `Pictures\keyboard.wtf\Screenshots`.
 - Read battery, charging, Windows, machine, user, and uptime status.
 - Sensitive actions use a two-turn local confirmation gate. Shutdown, restart, sleep, lock screen, and disable Wi-Fi are always gated; normal app closing is also gated in Ask mode.
 - Local action history is capped at 50 entries, and Settings includes an emergency Stop Jarvis button.
@@ -84,8 +86,9 @@ Read Back is separate: it uses local Piper voices and falls back to Windows SAPI
 ## Jarvis Safety Boundaries
 
 - Jarvis never sends an email or WhatsApp message automatically. It prepares content for review.
-- Auto-execute removes repetitive prompts only for routine actions. Normal window closing remains immediate in Auto-execute mode. Camera access, screen inspection, screenshots, virtual-desktop closing, lock, sleep, restart, shutdown, and disabling Wi-Fi still require a fresh confirmation.
+- Auto-execute removes repetitive prompts for explicit routine and privacy actions while keeping visible status. Closing a virtual desktop, lock, sleep, restart, shutdown, and disabling Wi-Fi still require a fresh confirmation.
 - Screen guidance is one-shot and user-triggered. The approved image is analyzed in memory and is not saved; there is no continuous screen watching.
+- Camera capture is one-shot and user-triggered. Windows desktop camera access remains authoritative; keyboard.wtf does not alter privacy settings.
 - Generic path opening blocks executables, scripts, installers, shortcuts, and registry files.
 - Browser tab commands run only while a supported browser is the foreground app.
 - Selected-text tools restore the previous clipboard after use.
@@ -102,7 +105,7 @@ For normal users:
 2. Run `keyboard-wtf-setup.exe`.
 3. Launch `keyboard.wtf` if the installer did not start it automatically.
 4. Open settings from the tray icon or press `Ctrl+Alt+,`.
-5. Allow microphone access, confirm shortcuts, and choose the Jarvis permission mode.
+5. Allow Windows microphone/camera access when needed, confirm active shortcuts, and choose the Jarvis permission mode.
 
 macOS is coming soon.
 
@@ -199,11 +202,13 @@ See [LICENSE](LICENSE).
 6. Say: "Send a professional message saying hi, I am sorry for being late for the meeting, I was stuck in traffic, to unknowngod2024@gmail.com."
 7. Show Gmail opened with the recipient, `Apology for Being Late` subject, and polished body already filled. Explain that the user reviews and clicks Send.
 8. Say: "Remember that I prefer concise replies," then show the bounded local memory in Settings.
-9. Say: "Start coding mode," or create a custom workflow in Settings and run it by name.
+9. Say: "Whenever I say initialize my setup, open Chrome, VS Code, and my project folder." Then say: "Initialize my set."
 10. In Ask mode, ask Jarvis to close Notepad. Show the confirmation preview, say "confirm," and show the action history.
 11. Say: "Open my liked videos on YouTube," then: "Play Whistle by Flo Rida on Spotify." Show the exact Spotify search and select the result manually.
-12. Say: "Take a screenshot." Confirm the privacy prompt and show the saved PNG in Pictures.
-13. Say "bye" to auto-end, or press `Ctrl+Alt+X` at any point for an emergency stop.
+12. Say: "Take a photo," and show the saved JPEG in `Pictures\keyboard.wtf\Camera`.
+13. Say: "Start recording," and explain that Windows Game Bar controls the actual recording state.
+14. Say: "Take a screenshot," and show the saved PNG in Pictures.
+15. Say "bye" to auto-end, or press `Ctrl+Alt+X` at any point for an emergency stop.
 
 ## Test It On This PC
 
@@ -221,8 +226,10 @@ See [LICENSE](LICENSE).
 12. Create a workflow in Settings, run it by name, and confirm it appears in local action history.
 13. In Ask mode, ask Jarvis to close Notepad. It must refuse to act until you answer with a fresh "confirm." In Auto-execute mode, normal window closing is immediate.
 14. Enable Start with Windows and confirm Settings reports the startup registration as active.
-15. Switch Jarvis action permissions between Ask and Auto-execute. Camera, screen inspection, screenshots, and virtual-desktop closing must still ask in both modes.
-16. Ask for YouTube Liked Videos, Spotify Liked Songs, and an Amazon product search.
-17. Start any mode and press `Ctrl+Alt+X`; the orb should say Cancelled and disappear after about three seconds.
+15. Switch Jarvis action permissions between Ask and Auto-execute. Ask must confirm actions; Auto-execute must run explicit camera, screen, screenshot, recording, app, file, and routine actions directly. Virtual-desktop closing and destructive system actions remain gated.
+16. Use the Settings camera and screen-guidance diagnostics and verify the saved photo exists while screen guidance creates no screenshot file.
+17. Save "initialize my setup," run the fuzzy phrase "initialize my set," and confirm the routine appears in Settings.
+18. Ask for YouTube Liked Videos, Spotify Liked Songs, and an Amazon product search.
+19. Start any mode and press `Ctrl+Alt+X`; the orb should say Cancelled and disappear after about three seconds.
 
 If typing into an elevated app is blocked by Windows, keyboard.wtf copies the result to the clipboard and tells you it used the fallback.

@@ -21,4 +21,10 @@ public sealed class FuzzyMatcherTests
     {
         Assert.True(FuzzyMatcher.Score("codex", "Calculator") < 0.5);
     }
+
+    [Fact]
+    public void RoutineTriggerVariantsRemainCloseEnoughToResolve()
+    {
+        Assert.True(FuzzyMatcher.Score("initialize my set", "initialize my setup") >= 0.72);
+    }
 }

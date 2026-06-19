@@ -510,12 +510,14 @@ public sealed class GeminiLiveConversationService : IDisposable
             "Use get_desktop_context when a request depends on the active app or clipboard. Use get_selected_text for requests like summarize this, explain this, translate this, or reply to this when the user has selected text. " +
             "Browser tab actions use the active browser. Full webpage DOM reading and reliable form automation require a future browser extension; explain that limitation when selected text is not enough. " +
             "When the user explicitly names Chrome, Edge, Brave, Firefox, Opera, Vivaldi, or Arc, pass that browser to open_url or web_search. Never silently use another browser if the requested browser is unavailable. " +
-            "Screen inspection is one-shot and privacy-sensitive. Call inspect_screen only after the user explicitly asks to look at the screen; the local permission gate will still require a fresh confirmation. Relay the returned guidance without claiming you clicked anything. " +
-            "Camera opening and take-photo requests always require local permission. take_photo currently opens Windows Camera for manual shutter use; never claim a photo was captured or saved when automatic_capture is false. " +
+            "Screen inspection is one-shot and privacy-sensitive. Call inspect_screen only after the user explicitly asks to look at the screen. Ask mode requires confirmation; auto-execute treats the explicit request as approval and shows visible status. Relay the returned guidance without claiming you clicked anything. " +
+            "Camera opening and take-photo requests must be explicit. Ask mode requires confirmation; auto-execute runs the one-shot request visibly. take_photo captures one webcam frame and reports the saved path only when photo_saved is true. " +
             "Virtual desktop create/next/previous actions use Windows shortcuts. Closing the current virtual desktop requires confirmation. A successful tool response means the shortcut was sent, not that desktop state was independently verified. " +
+            "For Windows recording requests, call windows_recording_action. Win+Alt+R is a toggle controlled by Xbox Game Bar, so report only that the shortcut was sent unless Windows state is independently verified. " +
+            "When the user says whenever I say PHRASE do ACTIONS, call remember_routine once with the trigger phrase and the requested apps, URLs, and folder. When the user later says that phrase or a close fuzzy variant, call run_workflow using exactly what they said; the local resolver performs fuzzy trigger matching. " +
             closeAppInstruction +
             "If the user asks who created you, who made you, who built you, or who your creator is, answer exactly: I was created by Tanush Shah on 7th June 2026. Do not use tools for that answer and do not bring it up for unrelated questions. " +
-            "Spotify playback currently opens the matching search; never claim the song started unless authenticated Spotify playback is added later. Camera control opens Windows Camera; never claim a photo was taken. take_screenshot captures the desktop, not the webcam. " +
+            "Spotify playback currently opens the matching search; never claim the song started unless authenticated Spotify playback is added later. take_screenshot captures the desktop, not the webcam. " +
             "Do not claim you added items to a cart, changed account data, bulk-unliked content, or sent a Discord message. Those authenticated browser actions are not supported without a browser companion and explicit confirmation. " +
             "Never send an email or message automatically. Gmail and WhatsApp actions prepare drafts or copy text for manual review only. " +
             "If a request is unsupported, say that clearly and briefly. " +
@@ -732,7 +734,7 @@ public sealed class GeminiLiveConversationService : IDisposable
                     }),
                 FunctionDeclaration(
                     "take_photo",
-                    "Request a photo. The stable Windows build opens Windows Camera for manual shutter use and reports automatic_capture false; never claim the photo was saved automatically.",
+                    "Capture one user-requested webcam photo and save it under Pictures/keyboard.wtf/Camera. Report the path only when photo_saved is true.",
                     new()
                     {
                         ["capture"] = Schema("boolean", "Set true only when the user explicitly asks to take or click a photo."),
@@ -761,6 +763,14 @@ public sealed class GeminiLiveConversationService : IDisposable
                     },
                     "action"),
                 FunctionDeclaration(
+                    "windows_recording_action",
+                    "Send a supported Windows recording shortcut. start/stop/toggle use Xbox Game Bar Win+Alt+R; open shows Game Bar; region opens the Windows screen-region recorder. The actual recording state is controlled by Windows.",
+                    new()
+                    {
+                        ["action"] = Schema("string", "start, stop, toggle, open game bar, or region."),
+                    },
+                    "action"),
+                FunctionDeclaration(
                     "create_workflow",
                     "Create or update a reusable workflow made only of app names, safe URLs, and an optional folder.",
                     new()
@@ -771,6 +781,17 @@ public sealed class GeminiLiveConversationService : IDisposable
                         ["folder"] = Schema("string", "Optional known folder name or existing folder path."),
                     },
                     "name"),
+                FunctionDeclaration(
+                    "remember_routine",
+                    "Atomically save a user-requested trigger phrase and its reusable routine. Use when the user says whenever I say a phrase, do these actions.",
+                    new()
+                    {
+                        ["trigger"] = Schema("string", "The exact phrase the user wants to say later, without the words whenever I say."),
+                        ["apps"] = Schema("string", "Comma-separated installed app names to open."),
+                        ["urls"] = Schema("string", "Comma-separated absolute http or https URLs to open."),
+                        ["folder"] = Schema("string", "Optional known folder name or existing folder path."),
+                    },
+                    "trigger"),
                 FunctionDeclaration(
                     "list_workflows",
                     "List saved workflows and built-in examples.",

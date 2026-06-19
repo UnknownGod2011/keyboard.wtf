@@ -14,7 +14,9 @@ public static class JarvisPermissionPolicy
         "web_search", "replace_selected_text", "type_text", "press_key", "save_note", "add_todo",
         "complete_todo", "set_timer", "system_control", "play_media", "open_service_page",
         "open_camera", "take_photo", "take_screenshot", "inspect_screen", "virtual_desktop_action",
+        "windows_recording_action",
         "open_gmail_draft", "prepare_whatsapp_message", "copy_text", "create_workflow",
+        "remember_routine",
         "run_workflow", "delete_workflow", "remember_app_alias", "remember_path_alias",
         "remember_link_alias", "remember_workflow_alias", "forget_learned_mapping", "set_browser_preference",
     };
@@ -28,7 +30,6 @@ public static class JarvisPermissionPolicy
     {
         toolName = (toolName ?? "").Trim();
         var normalizedAction = FuzzyMatcher.Normalize(action);
-        var normalizedApp = FuzzyMatcher.Normalize(appName);
         if (executingApprovedAction
             || toolName is "request_sensitive_action" or "confirm_sensitive_action" or "cancel_sensitive_action")
             return false;
@@ -38,9 +39,6 @@ public static class JarvisPermissionPolicy
             return false;
         if (!SideEffectingTools.Contains(toolName))
             return false;
-        if (toolName is "open_camera" or "take_photo" or "take_screenshot" or "inspect_screen"
-            || normalizedApp is "camera" or "windows camera")
-            return true;
         if (toolName == "virtual_desktop_action"
             && normalizedAction is "close" or "close desktop" or "close current desktop")
             return true;

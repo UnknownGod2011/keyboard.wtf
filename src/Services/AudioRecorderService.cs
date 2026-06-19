@@ -14,6 +14,7 @@ public sealed class AudioRecorderService : IDisposable
     private bool _disposed;
 
     public bool IsRecording { get; private set; }
+    public event Action<byte[], int> PcmDataAvailable;
 
     // volatile: DataAvailable writes on the NAudio callback thread; meters read on timer threads.
     // No lock needed — a torn int read is acceptable for a level display.
@@ -74,6 +75,7 @@ public sealed class AudioRecorderService : IDisposable
     private void OnDataAvailable(object sender, WaveInEventArgs e)
     {
         _pcmStream?.Write(e.Buffer, 0, e.BytesRecorded);
+        PcmDataAvailable?.Invoke(e.Buffer, e.BytesRecorded);
 
         // Compute peak for this buffer (16-bit signed samples)
         var peak = 0;

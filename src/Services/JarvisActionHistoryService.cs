@@ -17,7 +17,14 @@ public sealed class JarvisActionHistoryService
     public const int MaxEntries = 50;
     private readonly object _lock = new();
     private readonly List<JarvisActionEntry> _entries = new();
-    private readonly string _path = Path.Combine(SettingsService.AppDataDir, "jarvis-action-history.json");
+    private readonly string _path;
+
+    public JarvisActionHistoryService(string path = null)
+    {
+        _path = string.IsNullOrWhiteSpace(path)
+            ? Path.Combine(SettingsService.AppDataDir, "jarvis-action-history.json")
+            : path;
+    }
 
     public void Load()
     {
@@ -74,7 +81,7 @@ public sealed class JarvisActionHistoryService
     {
         try
         {
-            Directory.CreateDirectory(SettingsService.AppDataDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             File.WriteAllText(_path, JsonSerializer.Serialize(_entries, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)

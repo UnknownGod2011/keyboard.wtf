@@ -1,6 +1,13 @@
 {
   "cleanUrls": true,
   "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/downloads/keyboard-wtf-setup.exe",
+      "destination": "https://github.com/UnknownGod2011/keyboard.wtf/releases/download/v1.2.0/keyboard-wtf-setup.exe",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

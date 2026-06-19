@@ -32,10 +32,10 @@ public sealed class FileSearchResult
 
 public sealed class SmartFileSearchService
 {
-    public const int DefaultMaxDepth = 6;
+    public const int DefaultMaxDepth = 7;
     public const int DefaultMaxResults = 12;
-    public const int DefaultMaxScannedEntries = 25000;
-    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
+    public const int DefaultMaxScannedEntries = 50000;
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(7);
 
     private static readonly HashSet<string> RiskyExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -119,6 +119,39 @@ public sealed class SmartFileSearchService
                         SearchSummary = "a user-approved learned mapping",
                     };
                 }
+            }
+        }
+
+        var learnedMatches = new[] { LearnedMappingKind.File, LearnedMappingKind.Folder }
+            .Where(kind => (kind == LearnedMappingKind.File && includeFiles)
+                || (kind == LearnedMappingKind.Folder && includeFolders))
+            .SelectMany(kind => _mappings.Search(cleanQuery, kind, 4))
+            .Where(ExistsForKind)
+            .Select(entry => new
+            {
+                Entry = entry,
+                Score = Math.Max(
+                    FuzzyMatcher.Score(cleanQuery, entry.Alias),
+                    FuzzyMatcher.Score(cleanQuery, entry.DisplayName)),
+            })
+            .OrderByDescending(item => item.Score)
+            .ToArray();
+        if (learnedMatches.Length > 0)
+        {
+            var bestLearned = learnedMatches[0];
+            var secondScore = learnedMatches.Length > 1 ? learnedMatches[1].Score : 0;
+            var candidate = CandidateFromPath(bestLearned.Entry.Target, "Learned", bestLearned.Score);
+            if (bestLearned.Score >= 0.90
+                || (bestLearned.Score >= 0.68
+                    && (learnedMatches.Length == 1 || bestLearned.Score - secondScore >= 0.08)))
+            {
+                return new FileSearchResult
+                {
+                    Status = FileResolutionStatus.Found,
+                    Best = candidate,
+                    Candidates = [candidate],
+                    SearchSummary = "a fuzzy user-approved learned mapping",
+                };
             }
         }
 
@@ -213,17 +246,17 @@ public sealed class SmartFileSearchService
             || query.Contains("recent", StringComparison.OrdinalIgnoreCase)
             || query.Contains("last ", StringComparison.OrdinalIgnoreCase);
         var typeHint = DetectTypeHint(query);
-        var stack = new Stack<(SearchRoot Root, string Path, int Depth)>();
-        foreach (var root in roots.Reverse())
+        var queue = new Queue<(SearchRoot Root, string Path, int Depth)>();
+        foreach (var root in roots.OrderByDescending(root => root.Priority))
         {
             if (Directory.Exists(root.Path))
-                stack.Push((root, root.Path, 0));
+                queue.Enqueue((root, root.Path, 0));
         }
 
-        while (stack.Count > 0 && scanned < DefaultMaxScannedEntries)
+        while (queue.Count > 0 && scanned < DefaultMaxScannedEntries)
         {
             token.ThrowIfCancellationRequested();
-            var current = stack.Pop();
+            var current = queue.Dequeue();
             IEnumerable<string> entries;
             try
             {
@@ -266,7 +299,7 @@ public sealed class SmartFileSearchService
                 }
 
                 if (isDirectory && current.Depth < maxDepth)
-                    stack.Push((current.Root, entry, current.Depth + 1));
+                    queue.Enqueue((current.Root, entry, current.Depth + 1));
             }
         }
 
@@ -322,6 +355,16 @@ public sealed class SmartFileSearchService
             new(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Videos", 7),
             new(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "Music", 6),
         };
+        var pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+        var videos = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+        roots.AddRange(new[]
+        {
+            new SearchRoot(Path.Combine(pictures, "Screenshots"), "Windows Screenshots", 10),
+            new SearchRoot(Path.Combine(pictures, "keyboard.wtf", "Screenshots"), "keyboard.wtf Screenshots", 10),
+            new SearchRoot(Path.Combine(pictures, "keyboard.wtf", "Camera"), "keyboard.wtf Camera", 10),
+            new SearchRoot(Path.Combine(videos, "Captures"), "Game Bar Captures", 10),
+            new SearchRoot(Path.Combine(videos, "Screen Recordings"), "Screen Recordings", 10),
+        });
         var oneDrive = Environment.GetEnvironmentVariable("OneDrive");
         if (!string.IsNullOrWhiteSpace(oneDrive))
             roots.Add(new SearchRoot(oneDrive, "OneDrive", 7));
@@ -422,8 +465,9 @@ public sealed class SmartFileSearchService
     {
         var ignored = new HashSet<string>(StringComparer.Ordinal)
         {
-            "open", "find", "search", "for", "the", "my", "latest", "recent", "file",
+            "open", "find", "search", "for", "the", "my", "latest", "recent", "last", "file",
             "folder", "image", "photo", "picture", "video", "document", "inside", "from",
+            "downloaded", "used", "recently", "called", "named",
         };
         return string.Join(" ", FuzzyMatcher.Normalize(query)
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
