@@ -2,7 +2,7 @@
 
 **Stop typing. Say it.**
 
-keyboard.wtf is a standalone Windows voice desktop app built for Name.com's Domain Roulette challenge. Global shortcuts separate raw dictation, AI-polished writing, and Jarvis mode for spoken conversation plus safe computer actions.
+keyboard.wtf is a standalone Windows voice desktop app. Global shortcuts separate raw dictation, AI-polished writing, and Jarvis mode for spoken conversation plus safe computer actions.
 
 ## Why keyboard.wtf?
 
