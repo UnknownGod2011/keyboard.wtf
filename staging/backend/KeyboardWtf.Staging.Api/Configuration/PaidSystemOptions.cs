@@ -47,6 +47,9 @@ public sealed class PaidSystemOptions
     public int TokenCountCallsPerMinute { get; init; } = 1_000;
     public long GlobalDailyCreditMicrosCap { get; init; } = 1_000_000_000;
     public long PerUserDailyCreditMicrosCap { get; init; } = 100_000_000;
+    // Policy only: disabling daily ceilings does not disable wallet holds,
+    // usage tracking, reconciliation or abuse/security admission checks.
+    public bool DailySpendingCapsEnabled { get; init; } = true;
     public long MaxAccountCreditMicros { get; init; } = 10_000_000_000;
     public int GlobalUsageShardCount { get; init; } = 32;
     public long DefaultTaskCreditMicrosCap { get; init; } = 25_000_000;

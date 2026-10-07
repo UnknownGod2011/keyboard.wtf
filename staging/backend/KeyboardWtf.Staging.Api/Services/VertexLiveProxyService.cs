@@ -901,6 +901,7 @@ internal sealed class LiveUsageAccumulator
     private long _budgetReportedInputText;
     private long _budgetReportedOutputText;
     private bool _budgetCarryContext;
+    private long _budgetResponseInputTextUnits;
 
     public LiveUsageAccumulator(long maxTrafficBytes) =>
         _maxTrafficBytes = maxTrafficBytes;
@@ -969,7 +970,10 @@ internal sealed class LiveUsageAccumulator
                     if (!newAudioInput) _ambiguousTurn = true;
                 }
                 if (_responseInputGeneration < 0)
+                {
                     _responseInputGeneration = Interlocked.Read(ref _inputContentGeneration);
+                    _budgetResponseInputTextUnits = _budgetInputTextUnits;
+                }
                 Interlocked.Increment(ref _providerContentGeneration);
             }
             if (emittedOutput)
@@ -1064,6 +1068,16 @@ internal sealed class LiveUsageAccumulator
                     && _coveredContentGeneration == _providerContentGeneration)) && !_ambiguousTurn
                     && (_responseInputGeneration < 0 || _responseInputGeneration == _inputContentGeneration)
                     && (!_requiresTerminalMetadata || _candidateTokens == 0 || _responseInputGeneration >= 0);
+                if (budgetReceipt is not null && _terminalMetadataKnown && _responseInputGeneration >= 0)
+                {
+                    // A coherent terminal receipt covers the text already present
+                    // when this response began. Its real token count need not equal
+                    // our conservative UTF-16 estimate. Retaining that difference
+                    // counts acknowledged setup/history as imaginary new work.
+                    // Never clear later input, partial receipts or audio tails;
+                    // this anchor is guard-only, not settlement evidence.
+                    _budgetInputTextAnchor = Math.Max(_budgetInputTextAnchor, _budgetResponseInputTextUnits);
+                }
                 _closedInputAudioBytes = _inputAudioBytes;
                 _closedOutputAudioBytes = _outputAudioBytes;
                 _closedInputTextCharacters = _inputTextCharacters;

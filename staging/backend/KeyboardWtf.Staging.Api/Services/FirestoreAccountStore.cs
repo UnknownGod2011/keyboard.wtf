@@ -331,7 +331,7 @@ public sealed partial class FirestoreAccountStore : IAccountStore
             globalDailyCap,
             _options.GlobalUsageShardCount,
             cancellationToken);
-        if (shardedDailyCap <= 0)
+        if (_options.DailySpendingCapsEnabled && shardedDailyCap <= 0)
             throw new InvalidOperationException("The daily spending cap has been reached.");
         var globalShardIndex = GlobalUsageShardIndex(
             globalUsageDate,
@@ -397,20 +397,20 @@ public sealed partial class FirestoreAccountStore : IAccountStore
                 legacyGlobalSnapshot.Exists ? legacyGlobalSnapshot.ToDictionary() : [],
                 globalDailyCap,
                 _options.GlobalUsageShardCount);
-            if (effectiveShardedCap <= 0)
+            if (_options.DailySpendingCapsEnabled && effectiveShardedCap <= 0)
                 throw new InvalidOperationException("The daily spending cap has been reached.");
-            var globalShardCap = GlobalUsageShardCap(
+            var globalShardCap = effectiveShardedCap <= 0 ? 0 : GlobalUsageShardCap(
                 effectiveShardedCap,
                 _options.GlobalUsageShardCount,
                 globalShardIndex);
             var global = globalSnapshot.Exists ? globalSnapshot.ToDictionary() : [];
             var globalCommitted = CommittedIncludingCompanyLoss(global);
-            if (globalCommitted + reserveCreditMicros > globalShardCap)
+            if (_options.DailySpendingCapsEnabled && globalCommitted + reserveCreditMicros > globalShardCap)
                 throw new InvalidOperationException("The daily spending cap has been reached.");
             var userDailySnapshot = await transaction.GetSnapshotAsync(userDailyRef, cancellationToken);
             var userDaily = userDailySnapshot.Exists ? userDailySnapshot.ToDictionary() : [];
             var userDailyCommitted = CommittedIncludingCompanyLoss(userDaily);
-            if (userDailyCommitted + reserveCreditMicros > _options.PerUserDailyCreditMicrosCap)
+            if (_options.DailySpendingCapsEnabled && userDailyCommitted + reserveCreditMicros > _options.PerUserDailyCreditMicrosCap)
                 throw new InvalidOperationException("The account daily AI spending cap has been reached.");
 
             var eventId = $"reserve_{SafeId(requestId)}";
@@ -825,21 +825,21 @@ public sealed partial class FirestoreAccountStore : IAccountStore
                 legacyGlobalSnapshot.Exists ? legacyGlobalSnapshot.ToDictionary() : [],
                 _options.GlobalDailyCreditMicrosCap,
                 _options.GlobalUsageShardCount);
-            if (effectiveShardedCap <= 0)
+            if (_options.DailySpendingCapsEnabled && effectiveShardedCap <= 0)
                 throw new InvalidOperationException("The daily provider spending cap has been reached.");
-            var effectiveShardCap = GlobalUsageShardCap(
+            var effectiveShardCap = effectiveShardedCap <= 0 ? 0 : GlobalUsageShardCap(
                 effectiveShardedCap,
                 _options.GlobalUsageShardCount,
                 shardIndex);
             var globalCommitted = CommittedIncludingCompanyLoss(global);
-            if (globalCommitted + additional > effectiveShardCap)
+            if (_options.DailySpendingCapsEnabled && globalCommitted + additional > effectiveShardCap)
                 throw new InvalidOperationException("The daily provider spending cap has been reached.");
             var userDailyRef = accountRef.Collection("dailyUsage").Document(
                 globalUsageDate);
             var userDailySnapshot = await transaction.GetSnapshotAsync(userDailyRef, cancellationToken);
             var userDaily = userDailySnapshot.Exists ? userDailySnapshot.ToDictionary() : [];
             var userDailyCommitted = CommittedIncludingCompanyLoss(userDaily);
-            if (userDailyCommitted + additional > _options.PerUserDailyCreditMicrosCap)
+            if (_options.DailySpendingCapsEnabled && userDailyCommitted + additional > _options.PerUserDailyCreditMicrosCap)
                 throw new InvalidOperationException("The account daily AI spending cap has been reached.");
 
             var eventId = $"reserveext_{SafeId(requestId)}_{targetReservedCreditMicros}";
@@ -2769,12 +2769,12 @@ public sealed partial class FirestoreAccountStore : IAccountStore
             var legacySettled = Long(legacyData, "settledCreditMicros");
             var legacyCommitted = checked(Math.Max(0, legacyReserved) + Math.Max(0, legacySettled)
                 + CompanyLossExposure(legacyData));
-            if (legacyCommitted > globalDailyCap)
+            if (_options.DailySpendingCapsEnabled && legacyCommitted > globalDailyCap)
                 throw new InvalidOperationException("Legacy daily usage exceeds the configured global cap.");
             // Preserve the entire legacy commitment as a conservative cutover
             // allocation. If an old reservation is later released, that spare
             // capacity intentionally remains unused until the next UTC day.
-            var availableForShards = globalDailyCap - legacyCommitted;
+            var availableForShards = Math.Max(0, globalDailyCap - legacyCommitted);
             for (var index = 0; index < shardCount; index++)
             {
                 var shardCap = availableForShards == 0
