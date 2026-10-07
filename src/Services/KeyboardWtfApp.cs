@@ -5,6 +5,10 @@ using System.Windows.Forms;
 using KeyboardWtf.Destinations;
 using KeyboardWtf.Models;
 using KeyboardWtf.Services.Ai;
+using KeyboardWtf.Services.Ai.Backends;
+using KeyboardWtf.Services.BrowserAutomationV2;
+using KeyboardWtf.Services.PaidStaging;
+using KeyboardWtf.Services.Updates;
 
 public sealed class KeyboardWtfApp : IDisposable
 {
@@ -18,6 +22,8 @@ public sealed class KeyboardWtfApp : IDisposable
     private readonly IntentMemoryService _intentMemory = new();
     private readonly JarvisActionHistoryService _jarvisHistory = new();
     private readonly LearnedMappingService _learnedMappings = new();
+    private readonly BrowserNativeHostInstaller _browserNativeHostInstaller = new();
+    private readonly HashSet<string> _reportedHotkeyFailures = new(StringComparer.OrdinalIgnoreCase);
 
     private NotificationService _notifications;
     private VoiceCaptureService _capture;
@@ -25,9 +31,19 @@ public sealed class KeyboardWtfApp : IDisposable
     private VoiceOverlayForm _overlay;
     private GeminiLiveConversationService _liveConversation;
     private JarvisAutomationService _jarvisAutomation;
+    private BrowserHelperBridge _browserHelper;
+    private BrowserAutomationPlanner _browserPlanner;
+    private BrowserAutomationCoordinator _browserAutomation;
+    private PaidAccountService _paidAccount;
+    private AiBackendGateway _aiBackend;
+    private PersonalGeminiKeyValidator _personalKeyValidator;
+    private JarvisTimerService _timers;
     private System.Windows.Forms.Timer _startupHotkeyRetryTimer;
+    private System.Windows.Forms.Timer _publicUpdateTimer;
+    private PublicUpdateNotificationMonitor _publicUpdateNotifications;
     private int _startupHotkeyRetryCount;
     private bool _disposed;
+    private int _restartRequested;
 
     public KeyboardWtfApp(NotifyIcon notifyIcon)
     {
@@ -35,8 +51,19 @@ public sealed class KeyboardWtfApp : IDisposable
     }
 
     public SettingsService Settings => _settings;
+    // Read-only pet boundary: Luma yields its own browser microphone to native voice.
+    // This does not start, stop, configure or route any Jarvis/Smart Writing session.
+    internal bool LumaNativeVoiceBusy => KeyboardWtfState.IsRecording
+        || _liveConversation?.IsActive == true || _liveConversation?.IsStarting == true;
+    internal UpdateWorkAdmissionGate UpdateWorkAdmission { get; } = new();
+    internal Task TrackFiniteUpdateWorkAsync(Func<Task> work) => UpdateWorkAdmission.TrackAsync(work);
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+    // Private Settings audit adapter only; absent from normal release builds.
+    internal GeminiLiveConversationService PrivateAuditConversation => _liveConversation;
+#endif
     public SpeechRecognitionService SpeechRecognition => _speechRecognition;
     public CommandRegistry Commands => _commands;
+    public BrowserAutomationCoordinator BrowserAutomation => _browserAutomation;
 
     public void Start()
     {
@@ -48,19 +75,60 @@ public sealed class KeyboardWtfApp : IDisposable
         _intentMemory.Load();
         _jarvisHistory.Load();
         _learnedMappings.Load();
-        SyncStartupRegistration();
+        _paidAccount = new PaidAccountService(updateWorkAdmission: UpdateWorkAdmission);
+        PersonalApiSettingsController personalApiSettings = null;
+        if (_paidAccount.Enabled)
+        {
+            var vault = new PersonalApiVault(Path.Combine(SettingsService.AppDataDir, "personal-api-v1.dat"));
+            _aiBackend = new(vault, _paidAccount.AuthorizePersonalAsync);
+            _paidAccount.AttachAiBackend(_aiBackend);
+            _personalKeyValidator = new();
+            personalApiSettings = new(vault, _personalKeyValidator, new NativePersonalKeyEntryDialog());
+        }
+        if (!_paidAccount.PreserveExistingRegistrations)
+        {
+            SyncStartupRegistration();
+            RegisterBrowserNativeHost();
+        }
+        else
+        {
+            AppLog.Info("Isolated paid candidate: startup and native-host registrations were left unchanged");
+        }
         ApplySecretEnvironmentOverrides();
-        AiProviderRegistry.Initialize(_claudeApi);
+        AiProviderRegistry.Initialize(_claudeApi, _paidAccount);
         RegisterDestinations();
 
-        _capture = new VoiceCaptureService(_audioRecorder, _speechRecognition, _notifications, _router);
-        _liveConversation = new GeminiLiveConversationService(_notifications, _settings, _intentMemory);
+        _audioRecorder.AttachUpdateWorkAdmission(UpdateWorkAdmission);
+        _capture = new VoiceCaptureService(_audioRecorder, _speechRecognition, _notifications, _router, UpdateWorkAdmission);
+        _liveConversation = new GeminiLiveConversationService(
+            _notifications,
+            _settings,
+            _intentMemory,
+            _paidAccount,
+            _learnedMappings,
+            UpdateWorkAdmission);
+        _browserHelper = new BrowserHelperBridge();
+        _browserHelper.Start();
+        _browserPlanner = new BrowserAutomationPlanner(_paidAccount);
+        _browserAutomation = new BrowserAutomationCoordinator(
+            _settings,
+            _notifications,
+            _browserHelper,
+            _browserPlanner,
+            _paidAccount,
+            UpdateWorkAdmission);
+        _timers = new JarvisTimerService(_notifications, _jarvisHistory, UpdateWorkAdmission);
+        _browserAutomation.AnnouncementRequested += HandleLifecycleAnnouncement;
+        _timers.AnnouncementRequested += HandleLifecycleAnnouncement;
         _jarvisAutomation = new JarvisAutomationService(
             _notifications,
             _settings,
             _jarvisHistory,
             _learnedMappings,
-            OpenSettings);
+            () => OpenSettings(),
+            _timers,
+            _paidAccount,
+            _browserHelper);
         _commands = new CommandRegistry(
             this,
             _capture,
@@ -69,10 +137,16 @@ public sealed class KeyboardWtfApp : IDisposable
             _notifications,
             _liveConversation,
             _jarvisAutomation,
-            _jarvisHistory);
+            _jarvisHistory,
+            _browserAutomation);
         _liveConversation.SetToolExecutor(_commands.ExecuteJarvisToolAsync);
-        _liveConversation.SetUserTranscriptObserver(_commands.ObserveJarvisTranscript);
+        _liveConversation.SetUserTranscriptObserver(
+            _commands.ObserveJarvisTranscript,
+            _commands.ObserveImmediateJarvisControl,
+            _commands.CompleteJarvisUserTurn);
+        _liveConversation.SetSessionEndingObserver(_commands.HandleJarvisSessionEndingAsync);
         _overlay = new VoiceOverlayForm(_audioRecorder);
+        _overlay.InitializeUiThreadHandle();
 
         WebSettingsService.Instance.Initialize(
             this,
@@ -81,10 +155,21 @@ public sealed class KeyboardWtfApp : IDisposable
             _intentMemory,
             _jarvisHistory,
             _learnedMappings,
-            _jarvisAutomation);
+            _jarvisAutomation,
+            _browserAutomation,
+            _paidAccount,
+            personalApiSettings);
         WebSettingsService.Instance.Start();
+        if (_paidAccount.Enabled)
+            _ = TrackFiniteUpdateWorkAsync(InitializePaidAccountAsync);
 
-        _hotkeys.RegistrationFailed += (name, reason) => _notifications.Warning("Hotkey unavailable", $"{name}: {reason}");
+        _hotkeys.RegistrationFailed += (name, reason) =>
+        {
+            if (MarkHotkeyFailureNotified(_reportedHotkeyFailures, name, reason))
+                _notifications.Warning("Hotkey unavailable", $"{name}: {reason}");
+            else
+                AppLog.Info($"Hotkey remains unavailable during bounded startup retry: {name}");
+        };
         _hotkeys.RegistrationFallbackUsed += (name, requested, fallback) =>
             _notifications.Warning(
                 "Hotkey conflict handled",
@@ -92,11 +177,71 @@ public sealed class KeyboardWtfApp : IDisposable
         if (!RegisterHotkeys()
             && !HotkeyService.HasDuplicates(_settings.Current.Hotkeys, out _))
             ScheduleStartupHotkeyRetry();
-        LoadModelsAsync();
+        _ = TrackFiniteUpdateWorkAsync(LoadModelsAsync);
         StartPiperInstallInBackground();
         OpenFirstRunSetup();
 
         _notifications.Info("keyboard.wtf", "Stop typing. Say it.");
+        StartPublicUpdateNotifications();
+    }
+
+    private void StartPublicUpdateNotifications()
+    {
+        // Candidate/staging builds create no periodic client, token, UI timer
+        // or profile work. Existing feature startup finishes before this call.
+        if (!PublicUpdateEligibility.IsAllowed() || _disposed || _publicUpdateNotifications is not null) return;
+        try
+        {
+            _publicUpdateNotifications = new(UpdateWorkAdmission,
+                PublicUpdateEligibility.IsAllowed,
+                () => _settings.Current.UpdateChannel,
+                CheckPublicUpdateAsync,
+                callback => _overlay.BeginInvoke(callback),
+                update =>
+                {
+                    _notifications.Attention("Update available",
+                        $"keyboard.wtf {update.Version} ({update.Channel}) is available. Open Settings to review it.");
+                    return true; // A guarded attempt, not proof Windows displayed it.
+                });
+            _publicUpdateTimer = new() { Interval = 60_000 };
+            _publicUpdateTimer.Tick += (_, _) =>
+            {
+                if (_disposed) return;
+                _publicUpdateTimer.Interval = 86_400_000; // Daily; no hidden retry loop.
+                _ = _publicUpdateNotifications.CheckOnceAsync(); // Retains the same held run on overlap.
+            };
+            _publicUpdateTimer.Start();
+        }
+        catch
+        {
+            StopPublicUpdateNotifications();
+            AppLog.Info("Public update notification setup was unavailable; manual checking remains available.");
+        }
+    }
+
+    private static Task<VerifiedUpdate> CheckPublicUpdateAsync(string channel, CancellationToken token) =>
+        Task.Run(async () =>
+        {
+            // Existing CheckAsync awaits may capture their caller. Give this
+            // periodic worker NO UI context, and own its independent client
+            // through ORIGINAL completion/disposal. Never borrow manual consent.
+            using var checker = new SecureUpdateService();
+            try { return await checker.CheckAsync(channel, token).ConfigureAwait(false); }
+            catch
+            {
+                if (!token.IsCancellationRequested)
+                    AppLog.Info("Public update metadata check failed; no download or installation was attempted.");
+                throw;
+            }
+        }, token);
+
+    private void StopPublicUpdateNotifications()
+    {
+        _publicUpdateTimer?.Stop();
+        _publicUpdateTimer?.Dispose();
+        // Pending callbacks become inert; running/check workers retain original
+        // ownership and token resources. Never synchronously join this UI.
+        _publicUpdateNotifications?.Dispose();
     }
 
     public bool RegisterHotkeys()
@@ -108,6 +253,33 @@ public sealed class KeyboardWtfApp : IDisposable
         }
 
         return _hotkeys.RegisterDefaults(_settings.Current.Hotkeys, _commands);
+    }
+
+    public bool TryUpdateHotkeys(HotkeySettings requested, out string error)
+    {
+        if (!_hotkeys.TryReplaceAll(
+                requested,
+                _settings.Current.Hotkeys,
+                _commands,
+                requireAllRequested: false,
+                out error))
+            return false;
+        _settings.SaveHotkeys(requested);
+        return true;
+    }
+
+    public bool TryResetHotkeys(out string error)
+    {
+        var defaults = HotkeySettings.Defaults();
+        if (!_hotkeys.TryReplaceAll(
+                defaults,
+                _settings.Current.Hotkeys,
+                _commands,
+                requireAllRequested: true,
+                out error))
+            return false;
+        _settings.SaveHotkeys(defaults);
+        return true;
     }
 
     private void ScheduleStartupHotkeyRetry()
@@ -129,34 +301,200 @@ public sealed class KeyboardWtfApp : IDisposable
         _startupHotkeyRetryTimer.Start();
     }
 
-    public void OpenSettings() => WebSettingsService.Instance.OpenInBrowser();
+    internal static bool MarkHotkeyFailureNotified(
+        ISet<string> reportedFailures,
+        string name,
+        string reason)
+    {
+        ArgumentNullException.ThrowIfNull(reportedFailures);
+        return reportedFailures.Add($"{name ?? ""}\u001f{reason ?? ""}");
+    }
+
+    public void OpenSettings(string section = "") =>
+        WebSettingsService.Instance.OpenInBrowser(SettingsSectionRegistry.Resolve(section));
+
+    private async Task InitializePaidAccountAsync()
+    {
+        try
+        {
+            await _paidAccount.InitializeAsync();
+            // The earlier constructor-time warmup runs before the persisted
+            // paid session has loaded and therefore normally has nothing to
+            // authenticate with. Warm only after initialization; this is a
+            // read-only backend readiness request, never a provider/Live
+            // session and never a credit reservation.
+            await _paidAccount.WarmBackendAsync();
+        }
+        catch (Exception exception)
+        {
+            AppLog.Warning(exception, "Paid account initialization failed");
+        }
+    }
+
+    public async Task SendJarvisTextTurnAsync(string text, CancellationToken token = default)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            throw new ArgumentException("A Jarvis command is required.", nameof(text));
+        if (_liveConversation == null)
+            throw new InvalidOperationException("Jarvis is not initialized.");
+
+        if (!_liveConversation.IsActive)
+            await _liveConversation.StartAsync();
+        if (!_liveConversation.IsActive)
+            throw new InvalidOperationException("Jarvis could not start. Check the Gemini key, microphone, and app logs.");
+
+        // A text turn is already an authoritative final user utterance. Keep
+        // conversation termination ahead of direct actions, selected-context
+        // routing, browser guidance, and model interpretation just as the
+        // recognized-speech path does.
+        if (_liveConversation.TryEndFromAuthoritativeUserText(text))
+            return;
+
+        // Ordinary actions belong to tool execution so the model receives
+        // their actual result. Only explicit cancellation is immediate.
+        using var turnCancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _liveConversation.SessionCancellation);
+        _commands?.ObserveSubmittedJarvisText(text, turnCancellation.Token);
+
+        await _liveConversation.SendTextTurnAsync(
+            BrowserAutomationText.Truncate(text.Trim(), 4000),
+            turnCancellation.Token);
+    }
 
     public string StartupExecutablePath => ResolveStartupExecutablePath();
+
+    public bool RequestRestart(out string error)
+    {
+        error = "";
+        if (Interlocked.Exchange(ref _restartRequested, 1) != 0)
+            return true;
+
+        _commands?.CancelCurrent();
+        if (!WindowsAppLifecycleService.StartRestartHelper(out error))
+        {
+            Interlocked.Exchange(ref _restartRequested, 0);
+            return false;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(350);
+            Application.Exit();
+        });
+        return true;
+    }
+
+    public void RequestExitForUpdate()
+    {
+        _commands?.CancelCurrent();
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(350);
+            Application.Exit();
+        });
+    }
+
+    private void RegisterBrowserNativeHost()
+    {
+        try
+        {
+            var executable = Environment.ProcessPath ?? Application.ExecutablePath;
+            _browserNativeHostInstaller.Register(executable);
+            AppLog.Info("Chrome Helper native host registration is ready");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error(ex, "Chrome Helper native host registration failed");
+        }
+    }
+
+    private void HandleLifecycleAnnouncement(JarvisLifecycleAnnouncement announcement)
+    {
+        if (_disposed || announcement == null)
+            return;
+        _ = TrackFiniteUpdateWorkAsync(() => DeliverLifecycleAnnouncementAsync(announcement));
+    }
+
+    private async Task DeliverLifecycleAnnouncementAsync(
+        JarvisLifecycleAnnouncement announcement)
+    {
+        var deliveredByJarvis = false;
+        var liveOwnedDelivery = _liveConversation?.IsActive == true
+            || _liveConversation?.IsStarting == true;
+        try
+        {
+            deliveredByJarvis = _liveConversation != null
+                && await _liveConversation.TryAnnounceLifecycleAsync(announcement);
+            if (deliveredByJarvis)
+            {
+                AppLog.Info(
+                    $"Lifecycle announcement delivered through Jarvis Live: source={announcement.Source} state={announcement.State}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning(
+                ex,
+                $"Lifecycle delivery failed: source={announcement.Source} state={announcement.State}");
+        }
+
+        if (!deliveredByJarvis
+            && !liveOwnedDelivery
+            && !_disposed
+            && announcement.CanPublish
+            && !string.IsNullOrWhiteSpace(announcement.FallbackSpeech))
+        {
+            // A failed/cancelled Live delivery must never become a second TTS
+            // owner after goodbye. Background-only tasks retain their fallback.
+            AppLog.Info(
+                $"Lifecycle announcement used local speech fallback: source={announcement.Source} state={announcement.State}");
+            TtsService.Instance.Speak(announcement.FallbackSpeech, "en", UpdateWorkAdmission);
+        }
+    }
 
     public void SyncStartupRegistration() =>
         WindowsStartupService.Sync(_settings.Current.StartWithWindows, StartupExecutablePath);
 
-    private static void OpenFirstRunSetup()
+    private void OpenFirstRunSetup()
     {
+        if (_paidAccount?.Enabled == true)
+        {
+            if (_settings.IsFirstRun)
+                _ = TrackFiniteUpdateWorkAsync(() => Task.Run(async () =>
+                {
+                    await Task.Delay(900);
+                    WebSettingsService.Instance.OpenInBrowser("#getting-started");
+                }));
+            return;
+        }
         if (!string.IsNullOrWhiteSpace(KeyboardWtfState.GeminiApiKey))
             return;
 
-        _ = Task.Run(async () =>
+        _ = TrackFiniteUpdateWorkAsync(() => Task.Run(async () =>
         {
             await Task.Delay(900);
             WebSettingsService.Instance.OpenInBrowser("#set-api-key");
-        });
+        }));
     }
 
     public void ToggleAi()
     {
-        _settings.SaveUseAi(!KeyboardWtfState.UseAi);
+        try { _settings.SaveUseAi(!KeyboardWtfState.UseAi); }
+        catch (Helpers.SecretPersistenceException)
+        {
+            _notifications.Error("Settings not saved", Helpers.SecretPersistenceException.SafeMessage);
+            return;
+        }
         _notifications.Info("AI formatting", KeyboardWtfState.UseAi ? "Enabled." : "Disabled.");
     }
 
     public void SetDefaultDestination(string destination)
     {
-        _settings.SaveDefaultDestination(destination);
+        try { _settings.SaveDefaultDestination(destination); }
+        catch (Helpers.SecretPersistenceException)
+        {
+            _notifications.Error("Settings not saved", Helpers.SecretPersistenceException.SafeMessage);
+            return;
+        }
         _notifications.Info("Default destination", destination);
     }
 
@@ -183,16 +521,26 @@ public sealed class KeyboardWtfApp : IDisposable
 
     private void ApplySecretEnvironmentOverrides()
     {
+        if (_paidAccount?.Enabled == true && !_paidAccount.EmergencyByokEnabled)
+            return;
         var geminiKey = Environment.GetEnvironmentVariable("KEYBOARD_WTF_GEMINI_API_KEY");
         if (!string.IsNullOrWhiteSpace(geminiKey) && string.IsNullOrWhiteSpace(KeyboardWtfState.GeminiApiKey))
         {
-            _settings.SaveGeminiApiKey(geminiKey.Trim());
-            _settings.SaveAiProvider(AiProvider.Gemini);
-            AppLog.Info("Gemini API key imported from environment and saved encrypted");
+            try
+            {
+                _settings.SaveSecretSettings(new Dictionary<string, string>
+                    { ["geminiApiKey"] = geminiKey.Trim() }, AiProvider.Gemini);
+                AppLog.Info("Gemini API key imported from environment and saved encrypted");
+            }
+            catch (Helpers.SecretPersistenceException)
+            {
+                AppLog.Warning("Optional environment key import was not committed; startup will continue.");
+                _notifications.Warning("Settings not saved", Helpers.SecretPersistenceException.SafeMessage);
+            }
         }
     }
 
-    private async void LoadModelsAsync()
+    private async Task LoadModelsAsync()
     {
         try
         {
@@ -212,21 +560,34 @@ public sealed class KeyboardWtfApp : IDisposable
             if (ModelManager.IsWhisperPresent)
                 _speechRecognition.LoadWhisperModel(ModelManager.WhisperModelPath);
 
-            var needsDownload = !ModelManager.IsVoskPresent || !ModelManager.IsWhisperPresent;
-            if (!needsDownload)
-                return;
-
             KeyboardWtfState.IsDownloadingModels = true;
-            await ModelManager.EnsureModelsAsync(status =>
+            void ReportModelStatus(string status)
             {
                 KeyboardWtfState.ModelDownloadStatus = status;
-                AppLog.Info($"Model download: {status}");
-            });
+                AppLog.Info($"Model download progress: statusCharacters={status?.Length ?? 0}");
+            }
 
-            if (ModelManager.IsVoskPresent && !_speechRecognition.IsVoskLoaded)
+            var voskReady = ModelManager.IsVoskPresent
+                || await ModelManager.DownloadVoskModelAsync(ReportModelStatus);
+
+            if (voskReady && ModelManager.IsVoskPresent && !_speechRecognition.IsVoskLoaded)
                 _speechRecognition.LoadVoskModel(ModelManager.VoskModelPath);
-            if (ModelManager.IsWhisperPresent && !_speechRecognition.IsWhisperLoaded)
+            else if (!voskReady)
+                _notifications?.Warning(
+                    "Dictation model unavailable",
+                    "The local Vosk model could not be downloaded. Check your connection and retry in Settings.");
+
+            // Vosk is available after the small first download, so Dictation
+            // can start while the more accurate Whisper model continues.
+            var whisperReady = ModelManager.IsWhisperPresent
+                || await ModelManager.DownloadWhisperModelAsync(ReportModelStatus);
+
+            if (whisperReady && ModelManager.IsWhisperPresent && !_speechRecognition.IsWhisperLoaded)
                 _speechRecognition.LoadWhisperModel(ModelManager.WhisperModelPath);
+            else if (!whisperReady)
+                _notifications?.Warning(
+                    "Accurate speech model unavailable",
+                    "Whisper could not be downloaded. Fast local Dictation remains available when Vosk is ready.");
         }
         catch (Exception ex)
         {
@@ -240,12 +601,12 @@ public sealed class KeyboardWtfApp : IDisposable
         }
     }
 
-    private static void StartPiperInstallInBackground()
+    private void StartPiperInstallInBackground()
     {
         if (PiperInstaller.IsFullyInstalled)
             return;
 
-        _ = Task.Run(async () =>
+        _ = TrackFiniteUpdateWorkAsync(() => Task.Run(async () =>
         {
             KeyboardWtfState.IsInstallingPiper = true;
             try
@@ -253,7 +614,7 @@ public sealed class KeyboardWtfApp : IDisposable
                 await PiperInstaller.EnsureInstalledAsync(status =>
                 {
                     KeyboardWtfState.PiperInstallStatus = status;
-                    AppLog.Info($"Piper install: {status}");
+                    AppLog.Info($"Piper install progress: statusCharacters={status?.Length ?? 0}");
                 });
             }
             catch (Exception ex)
@@ -265,35 +626,38 @@ public sealed class KeyboardWtfApp : IDisposable
                 KeyboardWtfState.IsInstallingPiper = false;
                 KeyboardWtfState.PiperInstallStatus = null;
             }
-        });
+        }));
     }
 
     private static string ResolveStartupExecutablePath()
     {
         var current = Environment.ProcessPath ?? Application.ExecutablePath;
-        if (!current.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
-            return current;
-
         var installed = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Programs",
             "keyboard.wtf",
             "keyboard.wtf.exe");
-        if (File.Exists(installed))
-            return installed;
+        return ResolveStartupExecutablePath(current, installed);
+    }
 
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        for (var i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+    internal static string ResolveStartupExecutablePath(
+        string current,
+        string installed)
+    {
+        if (string.IsNullOrWhiteSpace(current))
+            return installed ?? "";
+
+        var directory = new DirectoryInfo(Path.GetDirectoryName(current) ?? "");
+        for (var depth = 0; depth < 12 && directory != null; depth++, directory = directory.Parent)
         {
-            foreach (var relative in new[]
+            var gitMarker = Path.Combine(directory.FullName, ".git");
+            if (Directory.Exists(gitMarker) || File.Exists(gitMarker))
             {
-                Path.Combine("dist", "release", "keyboard-wtf-win-x64", "keyboard.wtf.exe"),
-                Path.Combine("dist", "keyboard-wtf-win-x64", "keyboard.wtf.exe"),
-            })
-            {
-                var candidate = Path.Combine(dir.FullName, relative);
-                if (File.Exists(candidate))
-                    return candidate;
+                // Validation binaries run directly from the source tree. They
+                // must never replace the user's installed/startup executable.
+                return !string.IsNullOrWhiteSpace(installed) && File.Exists(installed)
+                    ? installed
+                    : current;
             }
         }
 
@@ -304,6 +668,7 @@ public sealed class KeyboardWtfApp : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        StopPublicUpdateNotifications();
         WebSettingsService.Instance?.Dispose();
         _hotkeys.Dispose();
         _startupHotkeyRetryTimer?.Dispose();
@@ -311,6 +676,11 @@ public sealed class KeyboardWtfApp : IDisposable
         _speechRecognition.Dispose();
         _claudeApi.Dispose();
         _liveConversation?.Dispose();
+        _timers?.Dispose();
+        _browserAutomation?.Dispose();
+        _aiBackend?.Dispose();
+        _personalKeyValidator?.Dispose();
+        _paidAccount?.Dispose();
         _jarvisAutomation?.Dispose();
         _overlay?.Dispose();
     }

@@ -21,6 +21,17 @@ mono_crash.*
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
+# Release build directories remain ignored, but reviewed release notes are
+# source and must survive a clean clone.
+!docs/[Rr]eleases/
+!docs/[Rr]eleases/*.md
+# Signed public update feeds are release source, not generated build output.
+!production/site/[Rr]eleases/
+!production/site/[Rr]eleases/*.json
+# Release build output is ignored, but source-controlled release tooling lives
+# under scripts/release and must remain available to clean CI checkouts.
+!scripts/[Rr]elease/
+!scripts/[Rr]elease/*.ps1
 dist/
 x64/
 x86/
@@ -405,10 +416,21 @@ FodyWeavers.xsd
 .env.*
 !.env.example
 *.local.json
+staging/**/.vercel/
+staging/**/.firebase/
+staging/**/appsettings.Development.json
+staging/**/service-account*.json
+staging/**/firebase-admin*.json
+output/playwright/
+.playwright-cli/
 
 # Local tooling and generated files
 official_docs/
 .claude/
+.artifacts/
+
+# Preserve this pre-existing local reparse artifact without ever staging it.
+/Program
 
 # Bundled Piper TTS binaries + voice models (~150 MB total).
 # These are downloaded at first run and should not be committed.

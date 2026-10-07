@@ -101,7 +101,7 @@ public sealed class ClaudeApiService : IDisposable
 
         if (!response.IsSuccessStatusCode)
         {
-            AppLog.Error($"Claude API error {(int)response.StatusCode}: {responseBody}");
+            AppLog.Error($"Claude API error: httpStatus={(int)response.StatusCode} responseCharacters={responseBody.Length}");
             throw new HttpRequestException($"Claude API returned {(int)response.StatusCode}: {ExtractErrorMessage(responseBody)}");
         }
 

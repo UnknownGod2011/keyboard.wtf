@@ -4,8 +4,26 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <Nullable>disable</Nullable>
   </PropertyGroup>
+
+  <!-- Test expectations must follow the requested build, not the SUT's returned configuration. -->
+  <PropertyGroup Condition="'$(KeyboardWtfPaidProduction)' == 'true' And '$(KeyboardWtfPaidProductionCandidate)' != 'true' And '$(KeyboardWtfPersonalApiCandidate)' != 'true'">
+    <DefineConstants>$(DefineConstants);KEYBOARD_WTF_TEST_PUBLIC_PRODUCTION</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(KeyboardWtfPaidProductionCandidate)' == 'true' Or '$(KeyboardWtfPersonalApiCandidate)' == 'true'">
+    <DefineConstants>$(DefineConstants);KEYBOARD_WTF_TEST_PRIVATE_CANDIDATE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(KeyboardWtfPaidProduction)' == 'true' And '$(KeyboardWtfPaidProductionCandidate)' != 'true' And '$(KeyboardWtfPersonalApiCandidate)' != 'true'">
+    <!-- Private tooling remains tested in its own build; public assembly tests
+         below prove those implementation types are actually absent. -->
+    <Compile Remove="PrivatePersonalRecordingInputTests.cs" />
+    <Compile Remove="PersonalAudioIngressDiagnosticsTests.cs" />
+    <Compile Remove="PrivateRecordingLifecycleTests.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
@@ -18,5 +36,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\KeyboardWtf.csproj" />
+    <ProjectReference Include="..\..\tools\KeyboardWtf.ReleaseSigner\KeyboardWtf.ReleaseSigner.csproj" />
+    <!-- Build the inert console fixture without importing its same-named assembly. -->
+    <ProjectReference Include="..\..\tools\KeyboardWtf.UpdateTestPeer\KeyboardWtf.UpdateTestPeer.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

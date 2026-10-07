@@ -1,6 +1,7 @@
 namespace KeyboardWtf.Services;
 
 using System.Diagnostics;
+using Microsoft.Win32;
 
 public sealed class BrowserLauncherService
 {
@@ -30,7 +31,7 @@ public sealed class BrowserLauncherService
         browserUsed = "";
         if (!TryNormalizeUrl(url, out var uri))
         {
-            message = "Only absolute http and https links can be opened.";
+            message = "Only valid http/https links or web hostnames can be opened.";
             return false;
         }
 
@@ -138,10 +139,66 @@ public sealed class BrowserLauncherService
     public static bool TryNormalizeUrl(string url, out Uri uri)
     {
         uri = null;
-        return !string.IsNullOrWhiteSpace(url)
-            && Uri.TryCreate(url.Trim(), UriKind.Absolute, out uri)
-            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+        var candidate = (url ?? "").Trim().Trim('"', '\'');
+        if (candidate.Length == 0)
+            return false;
+
+        var hasExplicitScheme = candidate.Contains("://", StringComparison.Ordinal);
+        if (!hasExplicitScheme)
+        {
+            // A selected or spoken web destination may reasonably be a bare
+            // hostname. Infer HTTPS only for an unambiguous DNS/IP host; never
+            // reinterpret free text, paths, credentials, or another scheme.
+            if (candidate.Any(char.IsWhiteSpace)
+                || candidate.Contains('\\')
+                || candidate.Contains('@')
+                || candidate.StartsWith("//", StringComparison.Ordinal)
+                || !Uri.TryCreate("https://" + candidate, UriKind.Absolute, out var inferred)
+                || string.IsNullOrWhiteSpace(inferred.Host)
+                || (Uri.CheckHostName(inferred.Host) == UriHostNameType.Unknown)
+                || (!inferred.Host.Contains('.')
+                    && Uri.CheckHostName(inferred.Host) != UriHostNameType.IPv4
+                    && Uri.CheckHostName(inferred.Host) != UriHostNameType.IPv6))
+            {
+                return false;
+            }
+
+            candidate = inferred.AbsoluteUri;
+        }
+
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out uri)
+            || string.IsNullOrWhiteSpace(uri.Host)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            return false;
+
+        // Uri.CheckHostName accepts underscores as DNS characters on Windows,
+        // but they are not valid web-host labels. In particular, an unresolved
+        // selection token must never become a navigable https:// destination.
+        var hostType = Uri.CheckHostName(uri.IdnHost);
+        var dnsLabels = uri.IdnHost.TrimEnd('.').Split('.');
+        return hostType != UriHostNameType.Unknown
+            && (hostType != UriHostNameType.Dns
+                || dnsLabels.All(label => label.Length > 0
+                    && label[0] != '-' && label[^1] != '-'
+                    && label.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-')));
     }
+
+    internal bool UsesChrome(string requestedBrowser)
+    {
+        var chosen = NormalizeBrowser(requestedBrowser);
+        if (chosen.Length == 0) chosen = NormalizeBrowser(_settings.Current.PreferredBrowser);
+        if (chosen.Length != 0) return chosen == "chrome";
+        try
+        {
+            using var choice = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice");
+            return IsChromeAssociation(choice?.GetValue("ProgId") as string);
+        }
+        catch { return false; } // Unknown default is never permission to substitute Chrome.
+    }
+
+    internal static bool IsChromeAssociation(string progId) =>
+        string.Equals(progId, "ChromeHTML", StringComparison.OrdinalIgnoreCase)
+        || (progId ?? "").StartsWith("ChromeHTML.", StringComparison.OrdinalIgnoreCase);
 
     private static string DisplayBrowser(string browser) => NormalizeBrowser(browser) switch
     {

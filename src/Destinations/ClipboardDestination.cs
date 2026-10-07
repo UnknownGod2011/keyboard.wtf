@@ -26,7 +26,7 @@ public class ClipboardDestination : IDestination
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Clipboard failed: {ex.Message}");
+            AppLog.Error(ex, "Clipboard failed");
             return Task.FromResult(false);
         }
     }

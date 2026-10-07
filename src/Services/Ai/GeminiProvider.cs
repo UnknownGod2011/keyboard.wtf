@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using KeyboardWtf.Models;
 
-internal sealed class GeminiProvider : IAiProvider, IDisposable
+internal sealed class GeminiProvider : IStructuredAiProvider, IDisposable
 {
     private static readonly string[] ModelCandidates =
     [
@@ -27,7 +27,11 @@ internal sealed class GeminiProvider : IAiProvider, IDisposable
     public bool IsImplemented => true;
     public bool IsAvailable => !string.IsNullOrWhiteSpace(KeyboardWtfState.GeminiApiKey);
 
-    public async Task<string> ReformatAsync(string rawText, string destinationPrompt, string language)
+    public async Task<string> ReformatAsync(
+        string rawText,
+        string destinationPrompt,
+        string language,
+        CancellationToken cancellationToken = default)
     {
         if (!IsAvailable)
             throw new InvalidOperationException("Gemini API key not configured");
@@ -39,9 +43,9 @@ internal sealed class GeminiProvider : IAiProvider, IDisposable
             try
             {
                 AppLog.Info($"Gemini request starting: {model}");
-                return await SendAsync(model, prompt);
+                return await SendAsync(model, prompt, cancellationToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 lastError = ex;
                 AppLog.Warning(ex, $"Gemini model failed: {model}");
@@ -125,7 +129,10 @@ internal sealed class GeminiProvider : IAiProvider, IDisposable
         }
     }
 
-    private async Task<string> SendAsync(string model, string prompt)
+    private async Task<string> SendAsync(
+        string model,
+        string prompt,
+        CancellationToken cancellationToken)
     {
         var body = new
         {
@@ -144,7 +151,7 @@ internal sealed class GeminiProvider : IAiProvider, IDisposable
             },
         };
 
-        var responseBody = await SendRequestAsync(model, body, CancellationToken.None);
+        var responseBody = await SendRequestAsync(model, body, cancellationToken);
         return ExtractContent(responseBody);
     }
 

@@ -36,12 +36,12 @@ public class DiscordWebhookDestination : IDestination
             }
 
             var body = await response.Content.ReadAsStringAsync();
-            AppLog.Error($"Discord webhook returned {(int)response.StatusCode}: {body}");
+            AppLog.Error($"Discord webhook returned: httpStatus={(int)response.StatusCode} responseCharacters={body.Length}");
             return false;
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Discord send failed: {ex.Message}");
+            AppLog.Error(ex, "Discord send failed");
             return false;
         }
     }

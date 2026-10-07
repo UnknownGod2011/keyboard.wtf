@@ -30,7 +30,7 @@ The keyboard becomes the trigger, not the main input method.
 - Fuzzy-search safe files and folders with breadth-first coverage across Desktop, Downloads, Documents, Pictures, Videos, Music, OneDrive, screenshot/camera/recording folders, and user-approved learned folders. Search remains bounded by depth, result count, scan count, timeout, and cancellation.
 - Save user-approved local aliases for apps, files, folders, links, workflows, and browser preference. Learned mappings are bounded to 80 entries and can be removed in Settings.
 - Open links and web searches in Chrome, Edge, Brave, Firefox, Opera, Vivaldi, or Arc when that installed browser is explicitly requested. Jarvis does not silently substitute a different browser.
-- Inspect one user-approved screen capture in memory with Gemini vision and return text guidance. The capture is not written to disk and Jarvis does not click or type automatically.
+- Analyze a user-requested screen snapshot and retain bounded temporary image context for follow-up questions in the same Jarvis session. An explicit request to look now captures a new screen. Analysis does not itself click or type, and its temporary snapshot is cleared at session end.
 - Create, switch, and close Windows virtual desktops through allowlisted Windows shortcuts. Closing a desktop always requires confirmation.
 - Start, stop, or toggle Xbox Game Bar recording with `Win+Alt+R`, open Game Bar, or open the Windows screen-region recorder. keyboard.wtf reports that the shortcut was sent because Windows owns the actual recording state.
 - Open common apps, switch/minimize/maximize windows, and open known folders or safe local documents.
@@ -93,7 +93,7 @@ Read Back is separate: it uses local Piper voices and falls back to Windows SAPI
 - Browser tab commands run only while a supported browser is the foreground app.
 - Selected-text tools restore the previous clipboard after use.
 - Basic text entry and navigation do not expose a generic Enter/submit action.
-- Full webpage DOM reading, reliable contact lookup, and account-specific form automation require a future browser extension or accessibility integration. Jarvis states this limitation instead of claiming an action succeeded.
+- Supported Chrome page/selection and browser-automation tasks use the published Chrome Helper. Simple website opening can use the Windows default browser without Helper. Unsupported actions fail truthfully; Helper does not grant unrestricted access to every site or account.
 - Spotify search/deep-linking works without extra credentials. Starting a specific track programmatically requires Spotify OAuth and an eligible Spotify playback device, so keyboard.wtf does not claim a song started.
 - Amazon cart changes, bulk YouTube unlike actions, and Discord personal-account messaging are intentionally not automated. They require authenticated site integrations, high-confidence target selection, and explicit confirmation.
 
@@ -101,11 +101,26 @@ Read Back is separate: it uses local Piper voices and falls back to Windows SAPI
 
 For normal users:
 
-1. Download the Windows installer from `https://keyboard-wtf.vercel.app`.
+1. Download the Windows installer from `https://keyboardwtf.com`.
 2. Run `keyboard-wtf-setup.exe`.
 3. Launch `keyboard.wtf` if the installer did not start it automatically.
 4. Open settings from the tray icon or press `Ctrl+Alt+,`.
-5. Allow Windows microphone/camera access when needed, confirm active shortcuts, and choose the Jarvis permission mode.
+5. Choose Personal API keys or Managed/Jarvis usage in Settings. Personal uses your compatible keys without Managed billing fallback; Managed uses a signed-in account and available allowance.
+6. For supported Chrome tasks, install the [Chrome Helper](https://chromewebstore.google.com/detail/gojdebdikepkpapmnggeljneamjdigbh). The installer registers its native host; browser installation/permissions still require your approval.
+7. Allow Windows microphone/camera access when needed, confirm the actual active shortcuts, and choose the Jarvis permission mode.
+
+The Windows x64 installer is self-contained: end users do not need Python, Node
+or a separate .NET installation. Missing supported Microsoft Visual C++ runtime
+is provisioned through Microsoft's installer and its required approval. Speech
+models may download on first use; network access is needed for these downloads
+and cloud AI. Restricted/offline setup reports the missing dependency rather
+than silently installing a broken partial application.
+
+Early installers are unsigned/unrecognized. Verify the official source and
+published checksum; browser download approval is separate from Windows
+SmartScreen approval. Do not disable protection or bypass a malware warning.
+Updates currently use notifications and the normal manual installer, not
+unattended installation.
 
 macOS is coming soon.
 
@@ -114,25 +129,21 @@ Developer prerequisites:
 - Windows
 - .NET 8 SDK
 - Microphone
-- Optional API key for AI formatting. Gemini is the default provider for the hackathon demo.
+- Compatible provider credentials for real cloud tests; offline tests do not need keys.
 
 Build and run:
 
 ```powershell
-dotnet restore
-dotnet build .\KeyboardWtf.sln
-dotnet run --project .\src\KeyboardWtf.csproj
+dotnet restore .\src\KeyboardWtf.csproj --runtime win-x64 --locked-mode
+dotnet build .\src\KeyboardWtf.csproj -p:KeyboardWtfPaidProduction=true
+dotnet test .\tests\KeyboardWtf.Tests\KeyboardWtf.Tests.csproj -p:KeyboardWtfPaidProduction=true
 ```
 
 The app starts in the Windows tray as `keyboard.wtf`. Double-click the tray icon or press `Ctrl+Alt+,` to open settings.
 
-Optional Gemini demo setup without committing secrets:
-
-```powershell
-[Environment]::SetEnvironmentVariable("KEYBOARD_WTF_GEMINI_API_KEY", "your-key-here", "User")
-```
-
-On next launch, keyboard.wtf imports that key into encrypted local settings and selects Gemini.
+Configure Personal credentials through Settings, not source files. This public
+source snapshot supports the canonical public build property shown above;
+private recording/preview harnesses are not part of the public release.
 
 ## Models
 
@@ -174,18 +185,22 @@ If typing into the active app fails, use Clipboard mode as the reliable fallback
 
 Current Windows release:
 
-- Landing page: `https://keyboard-wtf.vercel.app`
-- Installer: `site/downloads/keyboard-wtf-setup.exe`
+- Canonical landing page: [keyboardwtf.com](https://keyboardwtf.com)
+- Installer: the versioned official asset linked by Download, with its published checksum
 - Installed location: `%LOCALAPPDATA%\Programs\keyboard.wtf`
 
 Build the self-contained Windows installer:
 
 ```powershell
-.\scripts\build-windows-release.ps1
+pwsh .\scripts\build-windows-release.ps1 -PaidProductionRelease -SkipSiteHashUpdate -PublicInventoryPolicy <reviewed-policy.json>
 ```
 
-The installer is per-user, registers keyboard.wtf to start after sign-in, and launches
-the local setup page when a Gemini API key has not been configured.
+Release packaging requires a clean committed source snapshot and an independently
+reviewed explicit inventory policy; it must not infer approval from whatever
+files happen to be in a publish directory. The normal per-user installer sets
+up the native host, preserves the app profile on upgrade and offers launch.
+Startup remains subject to Windows/user Settings. See the release instructions
+in [RELEASING.md](docs/production/RELEASING.md).
 
 ## License
 
@@ -199,7 +214,7 @@ See [LICENSE](LICENSE).
 3. Press `Ctrl+Alt+K` and say: "Um, I finished the prototype, actually the full demo, and I will send it soon." Show the filler-free corrected sentence appear.
 4. Press `Ctrl+Alt+Q` and say: "Open Notepad." Show the app opening, then ask Jarvis to minimize and restore it.
 5. With Chrome or Edge active, say: "Open a new tab," then "close this tab."
-6. Say: "Send a professional message saying hi, I am sorry for being late for the meeting, I was stuck in traffic, to unknowngod2024@gmail.com."
+6. Say: "Prepare a professional apology email draft to demo@example.com."
 7. Show Gmail opened with the recipient, `Apology for Being Late` subject, and polished body already filled. Explain that the user reviews and clicks Send.
 8. Say: "Remember that I prefer concise replies," then show the bounded local memory in Settings.
 9. Say: "Whenever I say initialize my setup, open Chrome, VS Code, and my project folder." Then say: "Initialize my set."
@@ -210,10 +225,10 @@ See [LICENSE](LICENSE).
 14. Say: "Take a screenshot," and show the saved PNG in Pictures.
 15. Say "bye" to auto-end, or press `Ctrl+Alt+X` at any point for an emergency stop.
 
-## Test It On This PC
+## Bounded manual smoke test
 
 1. Run `%LOCALAPPDATA%\Programs\keyboard.wtf\keyboard.wtf.exe`.
-2. Press `Ctrl+Alt+,` and confirm Whisper and Vosk show as loaded, Gemini shows configured, and the Realtek microphone is selected.
+2. Open Settings and confirm the selected backend, available speech model, your microphone and actual active shortcuts. Do not assume another application's shortcuts are free.
 3. Open Notepad and click in the document.
 4. Press `Ctrl+Alt+D`, speak one sentence, and pause. The orb should move through Listening, Transcribing, and Done, then the literal text should appear.
 5. Press `Ctrl+Alt+K`, speak with a filler or self-correction, and confirm the polished result is typed.

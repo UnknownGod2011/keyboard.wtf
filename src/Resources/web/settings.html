@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23101210'/%3E%3Cpath d='M16 20h32v24H16z' fill='%23fff'/%3E%3Cpath d='M20 25h4v4h-4zm7 0h4v4h-4zm7 0h4v4h-4zm7 0h3v4h-3zM20 32h4v4h-4zm7 0h4v4h-4zm7 0h4v4h-4zm7 0h3v4h-3zM24 39h20v2H24z' fill='%23101210'/%3E%3C/svg%3E">
 <title>keyboard.wtf</title>
+<script src="/luma/theme-bootstrap.js"></script>
+<link rel="stylesheet" href="/luma/luma-ui.css">
 <style>
   :root {
     --bg: #ffffff;
@@ -16,6 +18,8 @@
     --surface-soft: #fafafa;
     --sidebar-bg: #f5f5f5;
     --accent: #0a0a0a;
+    --on-accent: #ffffff;
+    --accent-hover: #333333;
     --success: #16a34a;
     --warning: #d97706;
     --error: #dc2626;
@@ -93,7 +97,7 @@
   .sidebar nav a:hover { background: var(--border); color: var(--text); }
   .sidebar nav a.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 500;
   }
 
@@ -151,7 +155,7 @@
     width: 100%;
     height: 36px;
     padding: 0 12px;
-    background: #fff;
+    background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -178,7 +182,7 @@
   input::placeholder { color: var(--text-faint); }
 
   input:hover, select:hover { border-color: var(--border-hover); }
-  input:focus, select:focus { border-color: var(--text); background: #fff; }
+  input:focus, select:focus { border-color: var(--text); background: var(--bg); }
   input:disabled, select:disabled, button:disabled {
     opacity: 1;
     cursor: not-allowed;
@@ -192,12 +196,18 @@
     margin-top: 6px;
   }
   .hint.muted { color: var(--text-faint); }
+  .hotkey-live { min-height: 18px; }
+  .hotkey-live.ok { color: var(--success); }
+  .hotkey-live.warn { color: var(--warning); }
+  input.hotkey-unavailable { color: var(--error); border-color: #fecaca; }
+  input.hotkey-recording { border-color: var(--warning); background: #fffbeb; box-shadow: 0 0 0 2px rgba(217,119,6,.12); }
+  #paidRecentUsage, #paidRecentPurchases { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; }
 
   button {
     height: 36px;
     padding: 0 14px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
     font-size: 13px;
@@ -207,10 +217,10 @@
     transition: background 120ms, border-color 120ms, color 120ms;
     white-space: nowrap;
   }
-  button:hover:not(:disabled) { background: #333; border-color: #333; }
+  button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 
   button.ghost {
-    background: #fff;
+    background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
   }
@@ -240,21 +250,21 @@
     font-size: 14px;
     line-height: 34px;
     margin: 0;
-    background: #fff;
+    background: var(--bg);
     border-right: 1px solid var(--border);
     transition: color 120ms, background 120ms;
     user-select: none;
   }
   .segmented label:last-child { border-right: none; }
   .segmented label:hover:not(.active) { background: var(--surface-soft); }
-  .segmented label.active { color: #fff; background: var(--accent); font-weight: 500; }
+  .segmented label.active { color: var(--on-accent); background: var(--accent); font-weight: 500; }
 
   .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .pill {
     padding: 5px 10px;
     font-size: 11px;
     font-family: 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
-    background: #fff;
+    background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text-dim);
@@ -350,7 +360,7 @@
     padding: 0 14px;
     align-items: center;
     justify-content: center;
-    background: #fff;
+    background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -421,7 +431,7 @@
     left: calc(var(--sidebar-w) + 50%);
     transform: translateX(-50%) translateY(60px);
     background: var(--text);
-    color: #fff;
+    color: var(--on-accent);
     padding: 10px 16px;
     border-radius: var(--radius);
     font-size: 13px;
@@ -442,6 +452,7 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
+<link rel="stylesheet" href="/luma/settings-theme.css">
 </head>
 <body>
 <div class="layout">
@@ -449,13 +460,21 @@
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="sidebar-brand">
+      <button id="luma-theme-toggle" class="luma-theme-toggle" type="button" aria-label="Switch to dark theme" title="Switch theme">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20.7 14.7A9 9 0 0 1 9.3 3.3a9 9 0 1 0 11.4 11.4Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      </button>
       <h1>keyboard.wtf</h1>
       <p>Stop typing. Say it.</p>
     </div>
     <nav id="sidebar-nav">
+      <a href="#getting-started" class="paid-only" style="display:none">Getting Started</a>
       <a href="#voice-capture">Voice Capture</a>
+      <a href="#account-billing" class="paid-only" style="display:none">Account &amp; Billing</a>
       <a href="#hotkeys">Hotkeys</a>
       <a href="#assistant">Assistant</a>
+      <a href="#browser-automation">Browser Automation</a>
+      <a href="#how-to-use">How to use Jarvis</a>
+      <a href="#support-maintenance">Support &amp; maintenance</a>
       <a href="#set-api-key">Set API Key</a>
       <a href="#speech-models">Speech Models</a>
       <a href="#tts">Text-to-Speech</a>
@@ -468,6 +487,36 @@
 
   <!-- Main content -->
   <div class="main" id="main-scroll">
+
+    <!-- First-install guidance -->
+    <section id="getting-started" class="paid-only" style="display:none">
+      <h2>Getting Started</h2>
+      <p class="section-hint">Connect your account, review the shortcuts, then use keyboard.wtf from any normal Windows app.</p>
+
+      <div class="field">
+        <label>1. Connect your keyboard.wtf account</label>
+        <div class="hint">Sign in with Google. A new account starts with no active plan and paid AI remains blocked until a verified subscription is active.</div>
+        <div class="btn-row" style="margin-top:10px">
+          <a class="button-link" href="#account-billing">Open Account &amp; Billing</a>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>2. Review your shortcuts</label>
+        <div class="status-row"><span class="dot ok"></span><span class="name">Smart Writing</span><span class="value mono" id="onboardingSmartWriting">Ctrl+Alt+K</span></div>
+        <div class="status-row"><span class="dot ok"></span><span class="name">Dictation</span><span class="value mono" id="onboardingDictation">Ctrl+Alt+D</span></div>
+        <div class="status-row"><span class="dot ok"></span><span class="name">Jarvis</span><span class="value mono" id="onboardingJarvis">Ctrl+Alt+Q</span></div>
+        <div class="hint">These are the configured defaults. Windows will report a conflict here if another app already owns one.</div>
+        <div class="btn-row" style="margin-top:10px">
+          <a class="button-link" href="#hotkeys">Review or change shortcuts</a>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>3. Start in the app where you are working</label>
+        <div class="hint">Raw Dictation types local transcription. Smart Writing sends recorded speech through your authenticated account for polished output. Jarvis starts the live assistant.</div>
+      </div>
+    </section>
 
     <!-- Voice Capture -->
     <section id="voice-capture">
@@ -492,15 +541,17 @@
         <label for="maxDuration">Max recording duration</label>
         <div class="btn-row">
           <select id="maxDuration" onchange="maxDurationChanged()" style="flex:0 0 auto">
+            <option value="0">Until I stop it</option>
             <option value="30">30 seconds</option>
             <option value="60">60 seconds</option>
             <option value="90">90 seconds</option>
+            <option value="600">10 minutes</option>
             <option value="custom">Custom…</option>
           </select>
-          <input type="number" id="maxDurationCustom" min="5" max="300" step="5" placeholder="seconds" style="display:none;width:110px" onchange="settingChanged()">
+          <input type="number" id="maxDurationCustom" min="5" max="3600" step="5" placeholder="seconds" style="display:none;width:110px" onchange="settingChanged()">
           <span id="maxDurationUnit" style="display:none;font-size:13px;color:var(--text-dim)">seconds</span>
         </div>
-        <div class="hint">Longer recordings take longer to transcribe (roughly linear). Custom range: 5-300 s.</div>
+        <div class="hint">Longer recordings take longer to transcribe (roughly linear). Smart Writing always listens until you finish or it detects a final pause. Custom range: 5-3600 s.</div>
       </div>
 
       <div class="field">
@@ -527,7 +578,7 @@
           <option value="ru">Русский (Russian)</option>
           <option value="zh">中文 (Chinese)</option>
         </select>
-        <div class="hint">Uses your configured AI provider to translate the transcript. Requires an API key.</div>
+        <div class="hint" id="translateProviderHint">Uses your configured AI provider to translate the transcript. Requires an API key.</div>
       </div>
 
       <div class="field">
@@ -536,7 +587,7 @@
           <input type="checkbox" id="useFillerWordCleaner" onchange="settingChanged()" style="width:18px;height:18px;cursor:pointer">
           Strip filler sounds from transcripts (um, uh, hmm, er, äh)
         </label>
-        <div class="hint">Removes common hesitation sounds. Does not remove real words.</div>
+        <div class="hint">Optional local transcript cleanup for Raw Dictation and other local speech modes. Smart Writing always applies its own editing.</div>
       </div>
 
       <div class="field">
@@ -578,6 +629,75 @@
       </div>
     </section>
 
+    <!-- Paid account -->
+    <section id="account-billing" class="paid-only" style="display:none">
+      <h2>Account &amp; Billing</h2>
+      <p class="section-hint">Your plan, usage, purchases, and devices are synchronized securely with your keyboard.wtf account.</p>
+
+      <div class="field" id="paidIdentityCard" style="display:none">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div id="paidAvatar" style="width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:#111;color:#fff;font-weight:700">K</div>
+          <div><strong id="paidDisplayName">Google user</strong><div class="hint" id="paidEmail"></div></div>
+        </div>
+      </div>
+
+      <div class="status-row">
+        <span class="dot" id="paidAccountDot"></span>
+        <span class="name">Account</span>
+        <span class="value" id="paidAccountIdentity">Signed out</span>
+      </div>
+      <div class="status-row">
+        <span class="dot" id="paidPlanDot"></span>
+        <span class="name">Plan</span>
+        <span class="value" id="paidPlan">none</span>
+      </div>
+      <div class="status-row">
+        <span class="dot" id="paidDeviceDot"></span>
+        <span class="name">Device</span>
+        <span class="value" id="paidDevice">Not connected</span>
+      </div>
+      <div class="status-row">
+        <span class="dot" id="paidCycleDot"></span>
+        <span class="name">Billing cycle</span>
+        <span class="value" id="paidCycle">No active cycle</span>
+      </div>
+
+      <div class="field" style="margin-top:20px">
+        <label>Monthly usage remaining</label>
+        <div style="font-size:28px;font-weight:650" id="paidBalance">0</div>
+        <div class="level-bar" style="height:6px"><div class="level-bar-fill" id="paidBalanceBar" style="width:0%"></div></div>
+        <div class="hint" id="paidUsage">No paid usage this cycle.</div>
+      </div>
+
+      <div class="btn-row">
+        <button id="paidSignIn" onclick="paidAccountAction('sign-in')">Sign in with Google</button>
+        <button class="ghost" id="paidCancelSignIn" style="display:none" onclick="paidAccountAction('cancel-sign-in')">Cancel sign-in</button>
+        <button class="ghost" id="paidRefresh" onclick="paidAccountAction('refresh')">Refresh account</button>
+        <button class="ghost" id="paidBilling" onclick="paidAccountAction('billing')">Subscribe / Manage Billing</button>
+        <button class="ghost" id="paidCancelSubscription" style="display:none" onclick="paidAccountAction('cancel-subscription')">Cancel renewal</button>
+        <button class="ghost" id="paidManage" onclick="paidAccountAction('manage')">Manage account</button>
+        <button class="ghost" id="paidSwitchAccount" onclick="paidAccountAction('switch-account')">Switch Google account</button>
+        <button class="ghost" id="paidSignOut" onclick="paidAccountAction('sign-out')">Sign out</button>
+        <button class="ghost" id="paidSignOutAll" onclick="paidAccountAction('sign-out-all')">Sign out all devices</button>
+      </div>
+      <div class="hint" id="paidAccountMessage">Paid account is disabled.</div>
+
+      <div class="field" style="margin-top:20px">
+        <label>Recent usage</label>
+        <div id="paidRecentUsage" class="hint">No recent usage.</div>
+        <button class="button-link" style="margin-top:8px" onclick="paidAccountAction('manage')">View all usage</button>
+      </div>
+      <div class="field">
+        <label>Payment history</label>
+        <div id="paidRecentPurchases" class="hint">No payments yet.</div>
+        <button class="button-link" style="margin-top:8px" onclick="paidAccountAction('manage')">View all payments</button>
+      </div>
+      <div class="field">
+        <label>Devices &amp; sessions</label>
+        <div id="paidDevices" class="hint">No connected devices.</div>
+      </div>
+    </section>
+
     <!-- Hotkeys -->
     <section id="hotkeys">
       <h2>Hotkeys</h2>
@@ -585,30 +705,35 @@
 
       <div class="field">
         <label for="hotkeyPushToTalk">Smart writing</label>
-        <input id="hotkeyPushToTalk" type="text" onchange="hotkeysChanged()" placeholder="Ctrl+Alt+K">
+        <div class="btn-row"><input id="hotkeyPushToTalk" type="text" readonly aria-label="Smart writing shortcut"><button class="ghost" onclick="recordHotkey('PushToTalk')">Change shortcut</button><button class="ghost" onclick="resetOneHotkey('PushToTalk')">Reset to default</button></div>
+        <div class="hint hotkey-live" id="hotkeyPushToTalkStatus" aria-live="polite"></div>
         <div class="hint">Flow-like mode: transcribes quickly, removes filler and false starts, then types polished text.</div>
       </div>
 
       <div class="field">
         <label for="hotkeyDictation">Dictation toggle</label>
-        <input id="hotkeyDictation" type="text" onchange="hotkeysChanged()" placeholder="Ctrl+Alt+D">
+        <div class="btn-row"><input id="hotkeyDictation" type="text" readonly aria-label="Dictation shortcut"><button class="ghost" onclick="recordHotkey('Dictation')">Change shortcut</button><button class="ghost" onclick="resetOneHotkey('Dictation')">Reset to default</button></div>
+        <div class="hint hotkey-live" id="hotkeyDictationStatus" aria-live="polite"></div>
       </div>
 
       <div class="field">
         <label for="hotkeyJarvis">Jarvis mode</label>
-        <input id="hotkeyJarvis" type="text" onchange="hotkeysChanged()" placeholder="Ctrl+Alt+Q">
+        <div class="btn-row"><input id="hotkeyJarvis" type="text" readonly aria-label="Jarvis shortcut"><button class="ghost" onclick="recordHotkey('Jarvis')">Change shortcut</button><button class="ghost" onclick="resetOneHotkey('Jarvis')">Reset to default</button></div>
+        <div class="hint hotkey-live" id="hotkeyJarvisStatus" aria-live="polite"></div>
         <div class="hint">Chat, open allowed apps, prepare Gmail drafts, prepare WhatsApp messages, and use safe actions.</div>
       </div>
 
       <div class="field">
         <label for="hotkeyCancel">Cancel anything</label>
-        <input id="hotkeyCancel" type="text" onchange="hotkeysChanged()" placeholder="Ctrl+Alt+X">
+        <div class="btn-row"><input id="hotkeyCancel" type="text" readonly aria-label="Cancel shortcut"><button class="ghost" onclick="recordHotkey('Cancel')">Change shortcut</button><button class="ghost" onclick="resetOneHotkey('Cancel')">Reset to default</button></div>
+        <div class="hint hotkey-live" id="hotkeyCancelStatus" aria-live="polite"></div>
         <div class="hint">Immediately cancels listening, transcription, AI planning, or conversation.</div>
       </div>
 
       <div class="field">
         <label for="hotkeyOpenSettings">Open settings</label>
-        <input id="hotkeyOpenSettings" type="text" onchange="hotkeysChanged()" placeholder="Ctrl+Alt+,">
+        <div class="btn-row"><input id="hotkeyOpenSettings" type="text" readonly aria-label="Open Settings shortcut"><button class="ghost" onclick="recordHotkey('OpenSettings')">Change shortcut</button><button class="ghost" onclick="resetOneHotkey('OpenSettings')">Reset to default</button></div>
+        <div class="hint hotkey-live" id="hotkeyOpenSettingsStatus" aria-live="polite"></div>
       </div>
 
       <div class="field">
@@ -636,14 +761,15 @@
         </select>
       </div>
 
-      <button class="ghost" onclick="resetHotkeys()">Reset hotkeys</button>
+      <button class="ghost" onclick="resetHotkeys()">Reset all to defaults</button>
+      <div class="hint" id="hotkeyRecorderStatus">Choose Change shortcut, then press the new key combination.</div>
       <div class="hint" id="activeHotkeyStatus">Active shortcuts are checked when keyboard.wtf starts.</div>
     </section>
 
     <!-- Assistant -->
     <section id="assistant">
       <h2>Assistant</h2>
-      <p class="section-hint">Jarvis identity, Gemini voice, workflows, memory, safety, and action history.</p>
+      <p class="section-hint">Jarvis identity, voice, workflows, memory, safety, and action history.</p>
 
       <div class="field">
         <label for="assistantName">Assistant name</label>
@@ -661,9 +787,9 @@
       </div>
 
       <div class="field">
-        <label for="geminiVoice">Gemini Live voice</label>
+        <label for="geminiVoice">Jarvis voice</label>
         <select id="geminiVoice" onchange="assistantChanged()"></select>
-        <div class="hint">Jarvis conversation audio comes directly from Gemini Live. Voice changes apply to the next conversation.</div>
+        <div class="hint">Choose how Jarvis sounds. Voice changes apply to the next conversation.</div>
       </div>
 
       <div class="field">
@@ -729,6 +855,17 @@
         <div class="hint">In Ask mode, actions require confirmation. In Auto-execute mode, explicit camera, screen, screenshot, recording, app, browser, file, and routine requests run without another internal prompt. Shutdown, restart, sleep, lock, Wi-Fi disable, and closing a virtual desktop remain gated.</div>
       </div>
 
+      <div class="field" id="settingsStorageNotice" hidden>
+        <label>Settings storage</label>
+        <div class="hint" id="settingsStorageWarning"></div>
+      </div>
+
+      <div class="field" id="largeSavedSetupNotice" hidden>
+        <label>Large saved setup</label>
+        <div class="hint">Your saved workflows and mappings are getting large. JARVIS may take slightly longer to initialize.</div>
+        <div class="btn-row" style="margin-top:8px"><button class="ghost" onclick="dismissLargeSavedSetupWarning()">Got it</button></div>
+      </div>
+
       <div class="field">
         <label>Workflows</label>
         <div class="btn-row" style="margin-bottom:8px">
@@ -768,9 +905,11 @@
           <div class="memory-empty">No learned app, file, folder, browser, or link mappings yet.</div>
         </div>
         <div class="btn-row" style="margin-top:12px">
-          <button class="ghost" onclick="clearLearnedMappings()">Clear learned mappings</button>
+          <button class="ghost" onclick="clearLearnedMappings()">Clear app, file, folder, browser and Link mappings</button>
         </div>
         <div class="hint">Mappings are stored only under your local keyboard.wtf app data. Jarvis learns one only after you approve it.</div>
+        <div class="hint">Bulk clearing keeps workflows. A workflow row's Delete button removes its workflow and saved aliases.</div>
+        <div class="hint" id="savedStateStatus" role="status"></div>
       </div>
 
       <div class="field">
@@ -785,8 +924,207 @@
       </div>
     </section>
 
+    <!-- Browser Automation -->
+    <section id="browser-automation">
+      <h2>Browser Automation</h2>
+      <p class="section-hint">Smart page interaction in your existing logged-in Chrome. Direct opens and searches keep using Jarvis&rsquo;s fast lightweight tools.</p>
+
+      <div class="field" id="browserAutomationConsentPanel" style="border:1px solid var(--warning);background:color-mix(in srgb,var(--warning) 7%,transparent)">
+        <label>Browser Automation data disclosure</label>
+        <div class="hint">
+          When you start a browser task, the Chrome Helper sends the controlled tab's URL/title, bounded visible page text, selected text, form/control state, and action receipts to the local keyboard.wtf app through Chrome Native Messaging. This can include personal information or communications present in the task you selected. When page understanding needs AI, keyboard.wtf sends the user request and a bounded task snapshot - plus a current-tab screenshot only for visual recovery - to the configured Gemini browser model.
+        </div>
+        <div class="hint" style="margin-top:8px">
+          The extension does not read cookies, password values, OTPs, authentication storage, or file contents. Password, CAPTCHA, file-upload, payment, checkout, banking, and account-security steps stay manual. Data is not sold, used for advertising, creditworthiness, or unrelated profiling. Compact local diagnostic metadata remains until you delete the app log or local app data; page text and screenshots are not written to browser-task history.
+        </div>
+        <label id="browserAutomationConsentChoice" style="display:flex;align-items:flex-start;gap:10px;margin-top:12px;font-weight:normal;cursor:pointer">
+          <input type="checkbox" id="browserAutomationConsentCheck" style="width:18px;height:18px;margin-top:2px;cursor:pointer">
+          <span>I understand this disclosure and consent to browser-task data being processed for tasks I explicitly ask Jarvis to perform.</span>
+        </label>
+        <div class="btn-row" style="margin-top:12px">
+          <button id="browserAutomationConsentAccept" onclick="setBrowserAutomationConsent(true)">I understand - enable Browser Automation</button>
+          <button class="ghost" id="browserAutomationConsentWithdraw" onclick="setBrowserAutomationConsent(false)" style="display:none">Withdraw consent and disable</button>
+          <a class="button-link ghost" href="https://keyboardwtf.com/privacy" target="_blank" rel="noopener noreferrer">Read privacy policy</a>
+        </div>
+        <div class="hint" id="browserAutomationConsentStatus">Consent is required before the first browser task.</div>
+      </div>
+
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:10px;font-weight:normal;cursor:pointer">
+          <input type="checkbox" id="browserAutomationEnabled" onchange="browserAutomationChanged()" style="width:18px;height:18px;cursor:pointer">
+          Enable smart browser automation
+        </label>
+        <div class="hint" id="browserAutomationAiHint">Requires the Chrome Helper and configured AI access. It never silently launches a separate browser profile.</div>
+      </div>
+
+      <div class="field">
+        <label for="browserAutomationModel">Planner model</label>
+        <select id="browserAutomationModel" onchange="browserAutomationChanged()">
+          <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (fast default)</option>
+          <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (fallback)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:10px;font-weight:normal">
+          <input type="checkbox" id="browserAutomationMemoryEnabled" disabled style="width:18px;height:18px">
+          Learned workflow memory
+        </label>
+        <div class="hint">Disabled until the raw action path passes broad acceptance tests. Future memory stores semantic paths, never page contents, credentials, or raw coordinates.</div>
+      </div>
+
+      <div class="field">
+        <label>Browser Extension</label>
+        <div class="setup-grid">
+          <div class="setup-item"><div class="setup-label">Installation</div><div class="setup-value" id="browserExtensionSource">Not connected</div></div>
+          <div class="setup-item"><div class="setup-label">Store identity</div><div class="setup-value mono" id="browserStoreIdentity">gojdebdikepkpapmnggeljneamjdigbh</div></div>
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <a class="button-link" href="https://chromewebstore.google.com/detail/gojdebdikepkpapmnggeljneamjdigbh" target="_blank" rel="noopener noreferrer">Install from Chrome Web Store (recommended)</a>
+          <button class="ghost" onclick="testBrowserHelper()">Check connection status</button>
+          <button class="ghost" onclick="retryBrowserHelper()">Retry / reconnect</button>
+        </div>
+        <details style="margin-top:14px">
+          <summary style="cursor:pointer;font-size:13px;font-weight:600">Manual unpacked-extension fallback</summary>
+          <div class="hint" style="margin-top:10px">
+            Use this only when the Chrome Web Store installation is unavailable. Click the button below, open <span class="mono">chrome://extensions</span>, enable Developer mode, choose Load unpacked, and select the opened folder.
+          </div>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="ghost" onclick="connectBrowserHelper()">Prepare manual fallback</button>
+          </div>
+          <div class="hint" style="color:var(--warning)">Manual installations do not receive normal Chrome Web Store updates.</div>
+        </details>
+        <div class="hint" style="color:var(--warning);margin-top:10px"><strong>Do not enable both helpers at once.</strong> If the Store and unpacked versions are both enabled, keyboard.wtf stops browser commands until one is disabled.</div>
+      </div>
+
+      <div class="field">
+        <label>Existing Chrome Helper status</label>
+        <div class="setup-grid">
+          <div class="setup-item"><div class="setup-label">Connection</div><div class="setup-value" id="browserHelperConnection">Not connected</div></div>
+          <div class="setup-item"><div class="setup-label">Native bridge</div><div class="setup-value" id="browserBridgeStatus">Not registered</div></div>
+          <div class="setup-item"><div class="setup-label">Helper version</div><div class="setup-value" id="browserHelperVersion">Checking…</div></div>
+          <div class="setup-item"><div class="setup-label">Current tab</div><div class="setup-value" id="browserCurrentTabStatus">Unavailable</div></div>
+          <div class="setup-item"><div class="setup-label">Live graph</div><div class="setup-value" id="browserGraphStatus">Unavailable</div></div>
+          <div class="setup-item"><div class="setup-label">Active task</div><div class="setup-value" id="browserTaskStatus">Idle</div></div>
+        </div>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="ghost" onclick="controlBrowserAutomation('cancel')">Cancel task</button>
+        </div>
+        <div class="hint" id="browserActiveTab">Open a normal http/https page in Chrome.</div>
+        <div class="hint" id="browserAutomationError"></div>
+      </div>
+
+      <div class="field">
+        <label>How it behaves</label>
+        <div class="hint">The helper is idle until Jarvis starts a browser task. Controlled tabs show a small badge and exact orange target outline. Passwords, OTP, CAPTCHA, payment, checkout, and account-security steps pause for you. Ctrl+Alt+X cancels and leaves Chrome open.</div>
+      </div>
+    </section>
+
+    <!-- How to use Jarvis -->
+    <section id="how-to-use">
+      <h2>How to use Jarvis</h2>
+      <p class="section-hint">Speak naturally. Jarvis uses fast direct actions when possible and browser automation only when a page must be read or changed.</p>
+
+      <div class="field">
+        <label>Things to try</label>
+        <ul class="roadmap-list">
+          <li><strong>Open things:</strong> “Open Chrome, my Downloads folder, and Spotify.”</li>
+          <li><strong>Use Windows:</strong> “Open the camera” or ask for another supported Windows feature.</li>
+          <li><strong>Understand your screen:</strong> select something and ask Jarvis to explain or analyse it.</li>
+          <li><strong>Write faster:</strong> draft an email, message, note, or polished paragraph.</li>
+          <li><strong>Automate a web page:</strong> ask Jarvis to fill a form, inspect a page, choose a visible option, or complete a multi-step browser task.</li>
+          <li><strong>Remember preferences:</strong> “Remember my preferred meeting length is 30 minutes.”</li>
+          <li><strong>Create routines:</strong> “Whenever I say initialize my setup, open these apps and websites.”</li>
+          <li><strong>Use timers:</strong> start, check, pause, resume, or cancel a timer.</li>
+          <li><strong>Just ask:</strong> Jarvis is available for normal questions and conversation too.</li>
+        </ul>
+      </div>
+
+      <div class="field">
+        <label>Browser safety</label>
+        <div class="hint">Browser automation pauses for passwords, OTPs, CAPTCHAs, payments, checkout, and account-security steps. You can cancel at any time with Ctrl+Alt+X.</div>
+      </div>
+    </section>
+
+    <!-- Support and maintenance -->
+    <section id="support-maintenance">
+      <h2>Support &amp; maintenance</h2>
+      <p class="section-hint">Recover a frozen local session or use the registered Windows uninstaller.</p>
+
+      <div class="field">
+        <label>Secure app updates</label>
+        <select id="updateChannel" onchange="saveUpdateChannel()">
+          <option value="stable">Stable (recommended)</option>
+          <option value="beta">Beta</option>
+        </select>
+        <div class="btn-row" style="margin-top:10px">
+          <button onclick="checkForUpdates()">Check for updates</button>
+          <button id="installUpdateButton" class="ghost" style="display:none" onclick="installVerifiedUpdate()">Install verified update</button>
+          <a id="manualUpdateLink" class="ghost" style="display:none" href="https://keyboardwtf.com" target="_blank" rel="noopener noreferrer">Download from official website</a>
+        </div>
+        <div id="updateStatus" class="hint">Updates are accepted only after an embedded public key verifies the signed manifest and installer hash.</div>
+      </div>
+
+      <div class="field">
+        <label>Restart Jarvis</label>
+        <div class="hint">Safely cancels active work, releases hotkeys and helper connections, then starts exactly one fresh keyboard.wtf instance.</div>
+        <div class="btn-row" style="margin-top:10px">
+          <button onclick="restartKeyboardWtf()">Restart keyboard.wtf</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Uninstall keyboard.wtf</label>
+        <label style="display:flex;align-items:flex-start;gap:10px;font-weight:normal;cursor:pointer">
+          <input type="checkbox" id="uninstallRemoveUserData" style="width:18px;height:18px;margin-top:2px;cursor:pointer">
+          <span>Also remove local settings, memories, and diagnostic logs. Leave unchecked to preserve them for a later reinstall.</span>
+        </label>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="ghost" onclick="uninstallKeyboardWtf()">Open Windows uninstaller</button>
+        </div>
+        <div class="hint">Windows asks for confirmation before uninstalling. This removes only keyboard.wtf files and its startup registration.</div>
+      </div>
+
+      <div class="field">
+        <label>Need help?</label>
+        <div class="hint">
+          Visit <a href="https://keyboardwtf.com/support" target="_blank" rel="noopener noreferrer">keyboard.wtf Support</a>
+          or email <a href="mailto:support@keyboardwtf.com">support@keyboardwtf.com</a>.
+        </div>
+      </div>
+    </section>
+
     <!-- Set API Key -->
     <section id="set-api-key">
+      <div id="personalApiSettings" style="display:none">
+        <h2>Personal API Backend <span class="label-hint">Advanced</span></h2>
+        <p class="section-hint">Choose who provides AI for the next operation or Jarvis session. Active work keeps its existing backend.</p>
+        <div class="field">
+          <label for="personalProvider">Provider</label>
+          <select id="personalProvider"><option value="Gemini">Google Gemini</option><option disabled>OpenAI — not supported yet</option><option disabled>Claude — not supported yet</option></select>
+        </div>
+        <div class="field">
+          <label for="personalPolicy">Backend policy</label>
+          <select id="personalPolicy">
+            <option value="0">Managed Jarvis Usage</option>
+            <option value="1">Personal API Keys Only</option>
+            <option value="2">Managed → Personal when allowance is exhausted</option>
+          </select>
+          <button class="ghost" data-personal-action onclick="personalApiAction('policy', {policy:Number(document.getElementById('personalPolicy').value)})">Save policy</button>
+          <div class="hint">Personal-only never falls back to managed AI. Managed → Personal applies only to an authoritative allowance refusal before dispatch, not outages or provider rate limits.</div>
+        </div>
+        <div class="field">
+          <label>Personal keys <span class="label-hint">up to 10</span></label>
+          <div id="personalKeyRows"></div>
+          <div class="btn-row"><button data-personal-action onclick="personalApiAction('add')">Add key in native dialog</button><button class="ghost" onclick="personalApiAction('reveal')">Show pending dialog</button><button class="ghost" data-personal-action onclick="loadPersonalApiSettings()">Refresh</button></div>
+          <p class="hint">Only masked keys are shown here. Enter/replace keys in the Windows dialog; they are encrypted for this Windows user. Validation checks model metadata, not generation quota or Live support.</p>
+          <p class="hint">Personal requests send content directly to Google under your own account, billing, quotas and data-use terms. Managed Vertex terms may differ. Sign-in requirements still apply.</p>
+        </div>
+        <p id="personalApiStatus" class="hint" role="status" aria-live="polite"></p>
+        <details><summary>Repair unavailable Personal configuration</summary><p class="hint">Reset requires confirmation in a Windows dialog. It removes Personal keys and restores Managed policy; it does not erase other settings.</p><button class="ghost" data-personal-action onclick="personalApiAction('reset')">Review reset…</button></details>
+      </div>
+      <div id="legacyApiSettings">
       <h2>Set API Key</h2>
       <p class="section-hint">Connect Google Gemini for Smart Writing and Jarvis mode.</p>
 
@@ -834,6 +1172,7 @@
         </div>
         <div class="hint">Press the same mode shortcut again to submit manually. Otherwise, keyboard.wtf stops automatically after you finish speaking.</div>
       </div>
+      </div>
     </section>
 
     <!-- Speech Models -->
@@ -856,6 +1195,7 @@
         <button class="ghost" id="downloadBtn" onclick="downloadModels()">Download missing models</button>
         <span id="downloadSpinner" style="display:none"><span class="spinner"></span></span>
       </div>
+      <div class="hint" id="modelDownloadProgress" aria-live="polite" style="display:none;margin-top:10px"></div>
 
       <div class="field" style="margin-top:16px">
         <label>Location</label>
@@ -1118,93 +1458,320 @@
   </div><!-- .main -->
 </div><!-- .layout -->
 
+<div class="luma-settings-overlay" id="luma-settings-root" aria-label="Luma Settings companion"></div>
 <div class="toast" id="toast">Saved</div>
 
 <script>
 let currentSettings = {};
+let configuredHotkeys = {};
+let paidSignInPollTimer;
+let paidSignInRequestPending = false;
+let paidLastSignInState = 'idle';
 
 // ── Scroll-spy ──────────────────────────────────────────────────────────────
 (function () {
   const mainEl  = document.getElementById('main-scroll');
-  const navLinks = Array.from(document.querySelectorAll('#sidebar-nav a'));
-  const sections = Array.from(document.querySelectorAll('.main section[id]'));
+  const sectionById = new Map(Array.from(document.querySelectorAll('.main section[id]')).map(section => [section.id, section]));
+  const sectionOrder = new Map(Array.from(sectionById.keys()).map((id, index) => [id, index]));
+  const sidebarNav = document.getElementById('sidebar-nav');
+  const navLinks = Array.from(sidebarNav.querySelectorAll('a')).sort((left, right) =>
+    (sectionOrder.get(left.getAttribute('href').slice(1)) ?? Number.MAX_SAFE_INTEGER)
+      - (sectionOrder.get(right.getAttribute('href').slice(1)) ?? Number.MAX_SAFE_INTEGER));
+  navLinks.forEach(link => sidebarNav.appendChild(link));
+  const routeAliases = new Map([
+    ['general', 'voice-capture'],
+    ['account', 'account-billing'],
+    ['billing', 'account-billing'],
+    ['shortcuts', 'hotkeys'],
+    ['jarvis', 'assistant'],
+    ['browser-helper', 'browser-automation'],
+    ['how-to-use-jarvis', 'how-to-use'],
+    ['support', 'support-maintenance'],
+    ['maintenance', 'support-maintenance'],
+    ['text-to-speech', 'tts'],
+    ['whats-next', 'roadmap']
+  ]);
+  let scrollFrame;
+  let clickTarget;
+  let clickReleaseTimer;
+  let initialRoute = resolveRoute(location.hash);
+
+  function visibleSections() {
+    return navLinks
+      .filter(link => link.offsetParent !== null)
+      .map(link => sectionById.get(link.getAttribute('href').slice(1)))
+      .filter(section => section && section.offsetParent !== null);
+  }
 
   function setActive(id) {
     navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + id));
+  }
+
+  function resolveRoute(hash) {
+    const requested = String(hash || '').replace(/^#/, '').trim().toLowerCase().replaceAll('_', '-');
+    const canonical = routeAliases.get(requested) || requested;
+    return sectionById.has(canonical) ? canonical : '';
+  }
+
+  function scrollToSection(id, smooth, writeHistory) {
+    const target = sectionById.get(id);
+    if (!target || target.offsetParent === null) return false;
+    clickTarget = id;
+    clearTimeout(clickReleaseTimer);
+    clickReleaseTimer = setTimeout(() => {
+      clickTarget = undefined;
+      scheduleScrollSpy();
+    }, smooth ? 900 : 80);
+    setActive(id);
+    if (writeHistory && location.hash !== '#' + id)
+      history.pushState(null, '', '#' + id);
+    const mainTop = mainEl.getBoundingClientRect().top;
+    const targetTop = target.getBoundingClientRect().top;
+    mainEl.scrollTo({
+      top: mainEl.scrollTop + (targetTop - mainTop) - 24,
+      behavior: smooth ? 'smooth' : 'auto'
+    });
+    return true;
   }
 
   // Click: calculate offset relative to .main and scroll it directly
   navLinks.forEach(a => {
     a.addEventListener('click', e => {
       e.preventDefault();
+      initialRoute = undefined;
       const id = a.getAttribute('href').slice(1);
-      const target = document.getElementById(id);
-      if (!target) return;
-      const mainTop    = mainEl.getBoundingClientRect().top;
-      const targetTop  = target.getBoundingClientRect().top;
-      mainEl.scrollTo({ top: mainEl.scrollTop + (targetTop - mainTop) - 24, behavior: 'smooth' });
+      scrollToSection(id, true, true);
     });
   });
 
   // Scroll-spy: find the last section whose top edge has passed 80px into .main.
   // Special case: if scrolled to the very bottom, always activate the last section.
   function onScroll() {
+    const candidates = visibleSections();
+    if (candidates.length === 0) {
+      setActive(undefined);
+      return;
+    }
+    // Account data and paid/BYOK visibility change the height of sections above
+    // the requested deep link during the first load. Keep that explicit route
+    // authoritative until the initial settings render has settled; otherwise a
+    // ResizeObserver callback can rewrite (for example) #browser-automation to
+    // whichever section temporarily occupies the old scroll position.
+    if (initialRoute) {
+      setActive(initialRoute);
+      const target = sectionById.get(initialRoute);
+      if (target && target.offsetParent !== null) {
+        const mainTop = mainEl.getBoundingClientRect().top;
+        const delta = target.getBoundingClientRect().top - mainTop - 24;
+        if (Math.abs(delta) > 2)
+          mainEl.scrollTop += delta;
+      }
+      return;
+    }
     const atBottom = mainEl.scrollTop + mainEl.clientHeight >= mainEl.scrollHeight - 4;
     if (atBottom) {
-      setActive(sections[sections.length - 1]?.id);
+      clickTarget = undefined;
+      const activeId = candidates[candidates.length - 1].id;
+      setActive(activeId);
+      if (location.hash !== '#' + activeId)
+        history.replaceState(null, '', '#' + activeId);
+      return;
+    }
+    if (clickTarget) {
+      setActive(clickTarget);
       return;
     }
     const mainTop = mainEl.getBoundingClientRect().top;
-    let activeId  = sections[0]?.id;
-    for (const s of sections) {
-      if (s.getBoundingClientRect().top - mainTop <= 80) activeId = s.id;
+    const marker = mainEl.scrollTop + 84;
+    let activeId = candidates[0].id;
+    for (const s of candidates) {
+      const start = mainEl.scrollTop + s.getBoundingClientRect().top - mainTop;
+      if (start <= marker) activeId = s.id;
+      else break;
     }
     setActive(activeId);
+    if (location.hash !== '#' + activeId)
+      history.replaceState(null, '', '#' + activeId);
   }
 
-  mainEl.addEventListener('scroll', onScroll, { passive: true });
-  onScroll();
+  function scheduleScrollSpy() {
+    if (scrollFrame) cancelAnimationFrame(scrollFrame);
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = undefined;
+      onScroll();
+    });
+  }
+
+  mainEl.addEventListener('scroll', scheduleScrollSpy, { passive: true });
+  const releaseExplicitRoute = () => {
+    initialRoute = undefined;
+    clickTarget = undefined;
+  };
+  mainEl.addEventListener('wheel', releaseExplicitRoute, { passive: true });
+  mainEl.addEventListener('touchstart', releaseExplicitRoute, { passive: true });
+  mainEl.addEventListener('pointerdown', releaseExplicitRoute, { passive: true });
+  mainEl.addEventListener('keydown', releaseExplicitRoute);
+  if ('onscrollend' in mainEl)
+    mainEl.addEventListener('scrollend', () => { clickTarget = undefined; scheduleScrollSpy(); });
+  window.addEventListener('hashchange', () => {
+    const id = resolveRoute(location.hash);
+    if (id) {
+      initialRoute = id;
+      scrollToSection(id, false, false);
+    }
+  });
+  const layoutObserver = new ResizeObserver(scheduleScrollSpy);
+  layoutObserver.observe(mainEl);
+  sectionById.forEach(section => layoutObserver.observe(section));
+  window.refreshSettingsScrollSpy = scheduleScrollSpy;
+  window.syncSettingsRoute = () => {
+    const id = initialRoute || resolveRoute(location.hash);
+    if (id && scrollToSection(id, false, false)) return;
+    scheduleScrollSpy();
+  };
+  window.finishInitialSettingsRoute = () => {
+    if (!initialRoute) return;
+    const id = initialRoute;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      scrollToSection(id, false, false);
+      if (location.hash !== '#' + id)
+        history.replaceState(null, '', '#' + id);
+      scheduleScrollSpy();
+    }));
+  };
+  window.syncSettingsRoute();
 })();
 
 // ── Settings ─────────────────────────────────────────────────────────────────
+let personalApiAvailable = false;
+let personalApiState = null;
+let personalApiBusy = false;
+
+function showPersonalApiSection() {
+  if (!personalApiAvailable) return;
+  document.getElementById('set-api-key').style.display = '';
+  document.getElementById('personalApiSettings').style.display = '';
+  document.getElementById('legacyApiSettings').style.display = 'none';
+  const link = document.querySelector('#sidebar-nav a[href="#set-api-key"]');
+  if (link) { link.style.display = ''; link.textContent = 'Personal API Backend'; }
+}
+
+function renderPersonalApiState(result) {
+  personalApiState = result.state || null;
+  const status = document.getElementById('personalApiStatus');
+  status.textContent = result.message || '';
+  const rows = document.getElementById('personalKeyRows');
+  rows.replaceChildren();
+  if (!personalApiState) return;
+  document.getElementById('personalPolicy').value = String(personalApiState.policy);
+  if (personalApiState.cooldownUntil && Date.parse(personalApiState.cooldownUntil) > Date.now())
+    status.textContent += ' Gemini pool cooldown until ' + new Date(personalApiState.cooldownUntil).toLocaleTimeString() + '.';
+  const validationNames = ['Not verified', 'Authentication verified; Live/quota untested', 'Invalid credential', 'Model unavailable/restricted', 'Validation unavailable'];
+  for (const key of personalApiState.keys) {
+    const row = document.createElement('div'); row.className = 'field';
+    const label = document.createElement('div');
+    label.textContent = `${key.label || 'Gemini key'} · ${key.mask} · ${key.enabled ? 'Enabled' : 'Disabled'} · ${validationNames[key.lastValidation] || 'Unknown'}`;
+    row.appendChild(label);
+    const actions = document.createElement('div'); actions.className = 'btn-row';
+    for (const [title, action, extra] of [['Replace', 'replace', {}], [key.enabled ? 'Disable' : 'Enable', 'enabled', {enabled:!key.enabled}], ['Revalidate', 'validate', {}], ['Remove', 'remove', {}]]) {
+      const button = document.createElement('button'); button.className = 'ghost'; button.textContent = title;
+      button.dataset.personalAction = '';
+      button.onclick = () => personalApiAction(action, {id:key.id, keyRevision:key.revision, ...extra});
+      actions.appendChild(button);
+    }
+    row.appendChild(actions); rows.appendChild(row);
+  }
+}
+
+async function loadPersonalApiSettings() {
+  if (personalApiBusy) return;
+  try {
+    const response = await fetch('/api/personal-ai/state', {method:'POST', cache:'no-store'});
+    if (!response.ok) return;
+    personalApiAvailable = true;
+    renderPersonalApiState(await response.json());
+    showPersonalApiSection();
+  } catch (_) { if (personalApiAvailable) document.getElementById('personalApiStatus').textContent = 'Personal API Settings could not be refreshed.'; }
+}
+
+async function personalApiAction(action, extra = {}) {
+  if (action === 'reveal') {
+    try {
+      const response = await fetch('/api/personal-ai/action', {method:'POST', cache:'no-store', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'reveal'})});
+      const result = await response.json();
+      document.getElementById('personalApiStatus').textContent = result.message || 'The native dialog could not be shown.';
+    } catch (_) { document.getElementById('personalApiStatus').textContent = 'The native dialog could not be shown.'; }
+    return;
+  }
+  if (personalApiBusy || !personalApiAvailable) return;
+  if (!personalApiState && action !== 'reset') return;
+  if (action === 'remove' && !window.confirm('Remove this Personal API key?')) return;
+  personalApiBusy = true;
+  document.querySelectorAll('[data-personal-action]').forEach(button => button.disabled = true);
+  document.getElementById('personalApiStatus').textContent = ['add','replace','reset'].includes(action)
+    ? 'Complete the native Windows dialog…' : 'Working…';
+  try {
+    const response = await fetch('/api/personal-ai/action', {method:'POST', cache:'no-store', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action, revision:personalApiState?.revision || 0, ...extra})});
+    const result = await response.json();
+    if (result.state) renderPersonalApiState(result);
+    else document.getElementById('personalApiStatus').textContent = result.message || 'The change could not be saved.';
+  } catch (_) { document.getElementById('personalApiStatus').textContent = 'The action could not be confirmed. Refresh this section before retrying.'; }
+  finally {
+    personalApiBusy = false;
+    document.querySelectorAll('[data-personal-action]').forEach(button => button.disabled = false);
+  }
+}
+
 async function loadSettings() {
+  const savedRequest = ++savedStateRequestGeneration;
   try {
     const [settingsResp, micsResp] = await Promise.all([
-      fetch('/api/settings'),
+      fetch('/api/settings', {cache:'no-store'}),
       fetch('/api/microphones')
     ]);
     const settings = await settingsResp.json();
     const mics = await micsResp.json();
 
     currentSettings = settings;
+    document.getElementById('settingsStorageNotice').hidden = !settings.settingsStorageWarning;
+    document.getElementById('settingsStorageWarning').textContent = settings.settingsStorageWarning || '';
 
     selectEngineUI(settings.speechEngine);
     const hotkeys = settings.hotkeys || {};
-    renderActiveHotkeys(hotkeys, settings.activeHotkeys || {});
-    document.getElementById('hotkeyPushToTalk').value = hotkeys.PushToTalk || hotkeys.pushToTalk || 'Ctrl+Alt+K';
-    document.getElementById('hotkeyDictation').value = hotkeys.Dictation || hotkeys.dictation || 'Ctrl+Alt+D';
-    document.getElementById('hotkeyJarvis').value = hotkeys.Jarvis || hotkeys.jarvis || hotkeys.QuickSend || hotkeys.quickSend || 'Ctrl+Alt+Q';
-    document.getElementById('hotkeyCancel').value = hotkeys.Cancel || hotkeys.cancel || 'Ctrl+Alt+X';
-    document.getElementById('hotkeyOpenSettings').value = hotkeys.OpenSettings || hotkeys.openSettings || 'Ctrl+Alt+,';
+    configuredHotkeys = {
+      PushToTalk: hotkeys.PushToTalk || hotkeys.pushToTalk || 'Ctrl+Alt+K',
+      Dictation: hotkeys.Dictation || hotkeys.dictation || 'Ctrl+Alt+D',
+      Jarvis: hotkeys.Jarvis || hotkeys.jarvis || hotkeys.QuickSend || hotkeys.quickSend || 'Ctrl+Alt+Q',
+      Cancel: hotkeys.Cancel || hotkeys.cancel || 'Ctrl+Alt+X',
+      OpenSettings: hotkeys.OpenSettings || hotkeys.openSettings || 'Ctrl+Alt+,'
+    };
+    document.getElementById('onboardingSmartWriting').textContent = configuredHotkeys.PushToTalk;
+    document.getElementById('onboardingDictation').textContent = configuredHotkeys.Dictation;
+    document.getElementById('onboardingJarvis').textContent = configuredHotkeys.Jarvis;
+    renderActiveHotkeys(configuredHotkeys, settings.activeHotkeys || {});
     document.getElementById('defaultDestination').value = settings.defaultDestination || 'Clipboard';
     document.getElementById('textDeliveryMode').value = settings.textDeliveryMode || 'TypeIntoActiveApp';
     document.getElementById('assistantName').value = settings.assistantName || 'Jarvis';
     document.getElementById('assistantTone').value = settings.assistantTone || 'Balanced';
     renderGeminiVoices(settings.geminiVoices || [], settings.geminiVoice || 'Kore');
     document.getElementById('startWithWindows').checked = settings.startWithWindows !== false;
+    document.getElementById('updateChannel').value = settings.updateChannel === 'beta' ? 'beta' : 'stable';
     document.getElementById('jarvisPermissionMode').value = settings.jarvisPermissionMode || 'AlwaysAsk';
     document.getElementById('preferredBrowser').value = settings.preferredBrowser || '';
+    renderBrowserAutomation(settings.browserAutomation || {});
+    renderPaidAccount(settings.paidAccount || {});
+    void loadPersonalApiSettings();
     renderStartupStatus(settings);
     renderSetupStatus(settings);
     renderFeatureStatus(settings.featureStatus || {});
-    renderJarvisWorkflows(settings.jarvisWorkflows || []);
+    applySavedStateSnapshot({...settings, revision:settings.savedStateRevision}, savedRequest);
     renderJarvisHistory(settings.jarvisActionHistory || []);
     renderPendingSensitiveAction(settings.pendingSensitiveAction);
-    renderIntentMemory(settings.intentMemory || {});
-    renderLearnedMappings(settings.learnedMappings || []);
     document.getElementById('language').value = settings.language || 'auto';
     document.getElementById('whisperModelSize').value = settings.whisperModelSize || 'Small';
-    applyMaxDuration(settings.maxRecordingSeconds || 30);
+    applyMaxDuration(settings.maxRecordingSeconds ?? 30);
     document.getElementById('useNoiseGate').checked = settings.useNoiseGate !== false;
     document.getElementById('translateTargetLanguage').value = settings.translateTargetLanguage || '';
     document.getElementById('useFillerWordCleaner').checked = settings.useFillerWordCleaner === true;
@@ -1235,13 +1802,17 @@ async function loadSettings() {
     if (mics.devices.length === 0) {
       micSelect.innerHTML = '<option value="-1">No microphones found</option>';
     } else {
+      const systemDefault = document.createElement('option');
+      systemDefault.value = '-1';
+      systemDefault.textContent = 'System default microphone';
+      micSelect.appendChild(systemDefault);
       mics.devices.forEach(d => {
         const opt = document.createElement('option');
         opt.value = d.index;
         opt.textContent = d.name + (d.channels > 1 ? ` (${d.channels}ch)` : '');
         micSelect.appendChild(opt);
       });
-      micSelect.value = settings.microphoneDevice >= 0 ? settings.microphoneDevice : mics.devices[0].index;
+      micSelect.value = String(settings.microphoneDevice >= 0 ? settings.microphoneDevice : -1);
     }
 
     // API keys - masked values as placeholders when stored
@@ -1290,8 +1861,15 @@ async function loadSettings() {
     setModelStatus('whisperStatus', 'whisperStatusText', settings.whisperPresent, settings.whisperLoaded);
 
     const anyMissing = !settings.voskPresent || !settings.whisperPresent;
-    document.getElementById('downloadBtn').textContent = anyMissing ? 'Download missing models' : 'Models up to date';
-    document.getElementById('downloadBtn').disabled = !anyMissing;
+    const modelsDownloading = settings.modelsDownloading === true;
+    document.getElementById('downloadBtn').textContent = modelsDownloading
+      ? 'Downloading…'
+      : anyMissing ? 'Download missing models' : 'Models up to date';
+    document.getElementById('downloadBtn').disabled = modelsDownloading || !anyMissing;
+    const progress = document.getElementById('modelDownloadProgress');
+    progress.textContent = settings.modelDownloadStatus || (modelsDownloading ? 'Preparing speech models…' : '');
+    progress.style.display = modelsDownloading ? 'block' : 'none';
+    scheduleModelStatusRefresh(modelsDownloading);
 
     document.getElementById('modelsPath').textContent = settings.modelsPath || '(unknown)';
 
@@ -1412,22 +1990,164 @@ function renderLearnedMappings(entries) {
     const text = document.createElement('div');
     const key = document.createElement('div');
     key.className = 'memory-key';
-    const kind = entry.Kind || entry.kind || 'Mapping';
+    const rawKind = entry.Kind ?? entry.kind;
+    const kind = entry.ReadableKind || entry.readableKind
+      || (typeof rawKind === 'number' ? ['App','File','Folder','Browser','Workflow','Link'][rawKind] : rawKind) || 'Mapping';
     key.textContent = `${entry.Alias || entry.alias} · ${kind}`;
     const value = document.createElement('div');
     value.className = 'memory-value';
-    value.textContent = entry.DisplayName || entry.displayName || entry.Target || entry.target || '';
+    const targets = entry.ResolvedTargets || entry.resolvedTargets;
+    const state = entry.State || entry.state;
+    value.textContent = state === 'missing' ? 'Referenced workflow is missing. Delete this stale reference.'
+      : state === 'needs-repair' ? 'Needs repair: saved actions contain an unresolved destination.'
+      : targets ? targets.join(' · ') : entry.DisplayName || entry.displayName || entry.Target || entry.target || '';
     text.appendChild(key);
     text.appendChild(value);
     const button = document.createElement('button');
     button.className = 'ghost';
     button.textContent = 'Delete';
+    if (kind === 'Workflow') button.textContent = state === 'missing' ? 'Delete stale reference' : 'Delete workflow';
     button.onclick = () => deleteLearnedMapping(entry.Id || entry.id);
     row.appendChild(text);
     row.appendChild(button);
     list.appendChild(row);
   });
 }
+
+let savedStateRequestGeneration = 0;
+let appliedSavedStateRevision = -1;
+let requestedSavedStateRevision = -1;
+let savedStateStreamController = null;
+let savedStateReconnectTimer = null;
+let savedStatePageActive = true;
+
+function markSavedStatePending(message) {
+  document.getElementById('savedStateStatus').textContent = message;
+  ['learnedMappingsList','workflowList','intentMemoryList'].forEach(id => {
+    document.getElementById(id).hidden = true;
+  });
+}
+
+function applySavedStateSnapshot(state, requestGeneration) {
+  const revision = Number(state.revision ?? state.savedStateRevision ?? 0);
+  if (!savedStatePageActive || requestGeneration !== savedStateRequestGeneration || revision < appliedSavedStateRevision
+      || revision < requestedSavedStateRevision) return false;
+  renderJarvisWorkflows(state.jarvisWorkflows || []);
+  renderIntentMemory(state.intentMemory || {});
+  renderLearnedMappings(state.savedStateMappings || state.learnedMappings || []);
+  document.getElementById('largeSavedSetupNotice').hidden = !state.largeSavedSetup;
+  appliedSavedStateRevision = revision;
+  ['learnedMappingsList','workflowList','intentMemoryList'].forEach(id => {
+    document.getElementById(id).hidden = false;
+  });
+  document.getElementById('savedStateStatus').textContent = '';
+  return true;
+}
+
+async function dismissLargeSavedSetupWarning() {
+  try {
+    const response = await fetch('/api/settings/large-saved-setup/dismiss', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error('Could not dismiss the notice');
+    document.getElementById('largeSavedSetupNotice').hidden = true;
+    await refreshSavedState();
+  } catch (error) {
+    showToast(error.message || 'Could not dismiss the notice');
+  }
+}
+
+async function refreshSavedState() {
+  const requestGeneration = ++savedStateRequestGeneration;
+  try {
+    const response = await fetch('/api/saved-state', {cache:'no-store'});
+    if (!response.ok) throw new Error('Saved state unavailable');
+    const state = await response.json();
+    if (!applySavedStateSnapshot(state, requestGeneration)
+        && requestGeneration === savedStateRequestGeneration && Number(state.revision) < requestedSavedStateRevision)
+      queueMicrotask(refreshSavedState);
+  } catch {
+    if (requestGeneration === savedStateRequestGeneration)
+      markSavedStatePending('Saved state is reconnecting. Current records will appear when refreshed.');
+  }
+}
+
+async function connectSavedStateEvents() {
+  if (!savedStatePageActive || document.hidden || savedStateStreamController) return;
+  clearTimeout(savedStateReconnectTimer);
+  const controller = new AbortController();
+  savedStateStreamController = controller;
+  try {
+    // fetch keeps the existing Settings session header and recovery boundary;
+    // the SSE stream itself carries only revision numbers, never saved data.
+    const response = await fetch('/api/saved-state/events', {cache:'no-store', signal:controller.signal});
+    if (!response.ok || !response.body) throw new Error('Saved state stream unavailable');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = '';
+    let firstRevision = true;
+    while (!controller.signal.aborted) {
+      const {value, done} = await reader.read();
+      if (done) {
+        if (!controller.signal.aborted && savedStateStreamController === controller)
+          markSavedStatePending('Saved state is reconnecting. Current records will appear when refreshed.');
+        break;
+      }
+      buffered += decoder.decode(value, {stream:true});
+      let boundary;
+      while ((boundary = buffered.indexOf('\n\n')) >= 0) {
+        const frame = buffered.slice(0, boundary);
+        buffered = buffered.slice(boundary + 2);
+        const match = /^data: (\d+)$/m.exec(frame);
+        if (!match || savedStateStreamController !== controller) continue;
+        const revision = Number(match[1]);
+        if (firstRevision && revision < Math.max(appliedSavedStateRevision, requestedSavedStateRevision)) {
+          // A restarted app owns a fresh revision counter. Invalidate old
+          // process responses before accepting its first current snapshot.
+          ++savedStateRequestGeneration;
+          appliedSavedStateRevision = -1;
+          requestedSavedStateRevision = revision;
+          markSavedStatePending('Refreshing saved state…');
+        }
+        if (firstRevision || revision > appliedSavedStateRevision) {
+          firstRevision = false;
+          requestedSavedStateRevision = Math.max(requestedSavedStateRevision, revision);
+          if (revision > appliedSavedStateRevision) markSavedStatePending('Refreshing saved state…');
+          void refreshSavedState();
+        }
+      }
+    }
+  } catch (error) {
+    if (!controller.signal.aborted && savedStateStreamController === controller)
+      markSavedStatePending('Saved state is reconnecting. Current records will appear when refreshed.');
+  } finally {
+    if (savedStateStreamController === controller) {
+      savedStateStreamController = null;
+      if (savedStatePageActive && !document.hidden)
+        savedStateReconnectTimer = setTimeout(connectSavedStateEvents, 1500);
+    }
+  }
+}
+
+function disconnectSavedStateEvents() {
+  clearTimeout(savedStateReconnectTimer);
+  const controller = savedStateStreamController;
+  savedStateStreamController = null;
+  controller?.abort();
+}
+
+window.addEventListener('focus', () => { void refreshSavedState(); void connectSavedStateEvents(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) disconnectSavedStateEvents();
+  else { void refreshSavedState(); void connectSavedStateEvents(); }
+});
+window.addEventListener('pagehide', () => { savedStatePageActive = false; disconnectSavedStateEvents(); });
+window.addEventListener('pageshow', () => {
+  savedStatePageActive = true;
+  void refreshSavedState();
+  void connectSavedStateEvents();
+});
 
 function renderFeatureStatus(status) {
   document.getElementById('featureSmartSearch').textContent =
@@ -1449,16 +2169,35 @@ function renderFeatureStatus(status) {
 }
 
 function renderActiveHotkeys(configured, active) {
-  const labels = [
-    ['Jarvis', configured.Jarvis || configured.jarvis, active.Jarvis || active.jarvis],
-    ['Cancel', configured.Cancel || configured.cancel, active.Cancel || active.cancel]
+  const bindings = [
+    ['PushToTalk', 'Smart writing', 'hotkeyPushToTalk', 'hotkeyPushToTalkStatus', active.SmartWriting || active.smartWriting],
+    ['Dictation', 'Dictation', 'hotkeyDictation', 'hotkeyDictationStatus', active.Dictation || active.dictation],
+    ['Jarvis', 'Jarvis', 'hotkeyJarvis', 'hotkeyJarvisStatus', active.Jarvis || active.jarvis],
+    ['Cancel', 'Cancel', 'hotkeyCancel', 'hotkeyCancelStatus', active.Cancel || active.cancel],
+    ['OpenSettings', 'Open Settings', 'hotkeyOpenSettings', 'hotkeyOpenSettingsStatus', active.OpenSettings || active.openSettings]
   ];
-  const fallbacks = labels
-    .filter(item => item[1] && item[2] && item[1].toLowerCase() !== item[2].toLowerCase())
-    .map(item => `${item[0]} uses ${item[2]} because ${item[1]} is occupied`);
-  document.getElementById('activeHotkeyStatus').textContent = fallbacks.length
-    ? fallbacks.join('. ') + '.'
-    : 'Configured shortcuts are active.';
+  const issues = [];
+  for (const [action, label, inputId, statusId, activeValue] of bindings) {
+    const configuredValue = configured[action] || hotkeyDefaults[action];
+    const input = document.getElementById(inputId);
+    const status = document.getElementById(statusId);
+    input.value = activeValue || 'Unavailable - choose another';
+    input.dataset.configured = configuredValue;
+    input.classList.toggle('hotkey-unavailable', !activeValue);
+    status.className = `hint hotkey-live ${activeValue ? 'ok' : 'warn'}`;
+    if (!activeValue) {
+      status.textContent = `${configuredValue} could not be registered. Choose another shortcut.`;
+      issues.push(`${label} is unavailable`);
+    } else if (activeValue.toLowerCase() !== configuredValue.toLowerCase()) {
+      status.textContent = `Active in Windows: ${activeValue}. ${configuredValue} is occupied.`;
+      issues.push(`${label} uses ${activeValue}`);
+    } else {
+      status.textContent = `Active in Windows: ${activeValue}`;
+    }
+  }
+  document.getElementById('activeHotkeyStatus').textContent = issues.length
+    ? `${issues.join('. ')}.`
+    : 'All configured shortcuts are active in Windows.';
 }
 
 function renderGeminiVoices(voices, selectedVoice) {
@@ -1749,6 +2488,220 @@ async function assistantChanged() {
   }
 }
 
+function renderBrowserAutomation(browser) {
+  const consentAccepted = browser.consentAccepted === true;
+  document.getElementById('browserAutomationConsentPanel').style.borderColor =
+    consentAccepted ? 'var(--success)' : 'var(--warning)';
+  document.getElementById('browserAutomationConsentChoice').style.display =
+    consentAccepted ? 'none' : 'flex';
+  document.getElementById('browserAutomationConsentAccept').style.display =
+    consentAccepted ? 'none' : '';
+  document.getElementById('browserAutomationConsentWithdraw').style.display =
+    consentAccepted ? '' : 'none';
+  document.getElementById('browserAutomationConsentStatus').textContent =
+    consentAccepted
+      ? `Disclosure accepted (version ${browser.consentVersion || 0}). You can withdraw consent at any time.`
+      : 'Consent is required before the first browser task.';
+  document.getElementById('browserAutomationConsentCheck').checked = false;
+  document.getElementById('browserAutomationEnabled').checked = browser.enabled === true;
+  document.getElementById('browserAutomationEnabled').dataset.consent =
+    consentAccepted ? 'true' : 'false';
+  document.getElementById('browserAutomationModel').value =
+    browser.model || 'gemini-3.1-flash-lite-preview';
+  document.getElementById('browserAutomationMemoryEnabled').checked =
+    browser.memoryEnabled === true;
+  document.getElementById('browserExtensionSource').textContent =
+    browser.multipleHelpersDetected ? 'Conflict: two helpers enabled'
+      : browser.storeHelperConnected ? 'Chrome Web Store (recommended)'
+      : (browser.developmentHelperConnected ? 'Manual fallback' : 'Not connected');
+  document.getElementById('browserStoreIdentity').textContent =
+    browser.storeExtensionId || 'gojdebdikepkpapmnggeljneamjdigbh';
+  document.getElementById('browserHelperConnection').textContent =
+    browser.currentTabAutomationAvailable ? 'Connected and ready'
+      : (browser.helperConnected ? 'Connected; tab not ready' : 'Not connected');
+  document.getElementById('browserBridgeStatus').textContent =
+    browser.nativeHostRegistered
+      ? 'Registered to this app'
+      : (browser.nativeHostIssue || 'Not registered');
+  document.getElementById('browserHelperVersion').textContent =
+    `${browser.serviceWorkerVersion || '—'} / ${browser.contentScriptVersion || '—'} · expected ${browser.expectedVersion || '—'}`;
+  document.getElementById('browserCurrentTabStatus').textContent =
+    browser.currentTabAutomationAvailable ? 'Available' : 'Unavailable';
+  document.getElementById('browserGraphStatus').textContent =
+    browser.activeTabFresh
+      ? `${browser.controlCount || 0} controls · graph ${browser.graphVersion || 0}`
+      : 'Stale or unavailable';
+  document.getElementById('browserTaskStatus').textContent =
+    browser.task?.taskId
+      ? `${browser.task.state}: ${browser.task.currentAction || ''}`
+      : 'Idle';
+  document.getElementById('browserActiveTab').textContent =
+    browser.activeTabUrl
+      ? `${browser.activeTabTitle || 'Current tab'} · ${browser.activeTabUrl}`
+      : 'Open a normal http/https page in Chrome.';
+  document.getElementById('browserAutomationError').textContent =
+    browser.lastError || browser.nativeHostIssue || '';
+}
+
+async function browserAutomationChanged() {
+  const enabled = document.getElementById('browserAutomationEnabled').checked;
+  if (enabled
+      && document.getElementById('browserAutomationEnabled').dataset.consent !== 'true') {
+    document.getElementById('browserAutomationEnabled').checked = false;
+    document.getElementById('browserAutomationConsentPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast('Accept the Browser Automation disclosure first');
+    return;
+  }
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        browserAutomationEnabled: document.getElementById('browserAutomationEnabled').checked,
+        browserAutomationModel: document.getElementById('browserAutomationModel').value,
+        browserAutomationMemoryEnabled: false
+      })
+    });
+    showToast('Browser Automation saved');
+    loadSettings();
+  } catch {
+    showToast('Failed to save Browser Automation');
+  }
+}
+
+async function setBrowserAutomationConsent(accepted) {
+  if (accepted && !document.getElementById('browserAutomationConsentCheck').checked) {
+    showToast('Check the consent box to continue');
+    return;
+  }
+  try {
+    const response = await fetch('/api/browser-automation/consent', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action'
+      },
+      body: JSON.stringify({ accepted })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Consent update failed');
+    showToast(accepted
+      ? 'Browser Automation enabled'
+      : 'Browser Automation consent withdrawn');
+    loadSettings();
+  } catch (error) {
+    showToast(error.message || 'Consent update failed');
+  }
+}
+
+async function connectBrowserHelper() {
+  try {
+    const response = await fetch('/api/browser-helper/connect', {
+      method: 'POST',
+      headers: { 'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action' }
+    });
+    const data = await response.json();
+    showToast(data.ok ? 'Manual fallback folder opened' : (data.error || 'Fallback setup failed'));
+    loadSettings();
+  } catch (error) {
+    showToast('Fallback setup failed: ' + error.message);
+  }
+}
+
+async function retryBrowserHelper() {
+  try {
+    const response = await fetch('/api/browser-helper/reconnect', {
+      method: 'POST',
+      headers: { 'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action' }
+    });
+    const data = await response.json();
+    showToast(data.ok ? 'Chrome bridge re-registered; reconnecting' : (data.error || 'Reconnect failed'));
+    await new Promise(resolve => setTimeout(resolve, 900));
+    await refreshBrowserAutomationStatus();
+  } catch (error) {
+    showToast('Reconnect failed: ' + error.message);
+  }
+}
+
+async function testBrowserHelper() {
+  try {
+    const response = await fetch('/api/browser-helper/test', {
+      method: 'POST',
+      headers: { 'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action' }
+    });
+    const data = await response.json();
+    showToast(data.ok
+      ? `Current tab ready with ${data.controlCount || 0} controls`
+      : (data.error || 'Existing Chrome Helper not connected'));
+    await refreshBrowserAutomationStatus();
+  } catch (error) {
+    showToast('Helper test failed: ' + error.message);
+  }
+}
+
+async function controlBrowserAutomation(action) {
+  try {
+    const response = await fetch('/api/browser-automation/control', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action'
+      },
+      body: JSON.stringify({ action })
+    });
+    const data = await response.json();
+    showToast(data.ok ? `Browser task ${action} accepted` : 'No active browser task');
+    await refreshBrowserAutomationStatus();
+  } catch (error) {
+    showToast('Browser control failed: ' + error.message);
+  }
+}
+
+async function restartKeyboardWtf() {
+  if (!confirm('Restart keyboard.wtf now? Active listening, timers, and browser tasks will stop.')) return;
+  try {
+    const response = await fetch('/api/app/restart', {
+      method: 'POST',
+      headers: { 'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action' }
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Restart failed');
+    showToast('Restarting keyboard.wtf...');
+  } catch (error) {
+    showToast(error.message || 'Restart failed');
+  }
+}
+
+async function uninstallKeyboardWtf() {
+  const removeUserData = document.getElementById('uninstallRemoveUserData').checked;
+  const dataNotice = removeUserData
+    ? ' Local settings, memories, and diagnostic logs will also be removed.'
+    : ' Local settings and memories will be preserved.';
+  if (!confirm('Open the registered Windows uninstaller?' + dataNotice)) return;
+  try {
+    const response = await fetch('/api/app/uninstall', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action'
+      },
+      body: JSON.stringify({ removeUserData })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Uninstaller could not start');
+    showToast('Windows uninstaller opened');
+  } catch (error) {
+    showToast(error.message || 'Uninstaller could not start');
+  }
+}
+
+async function refreshBrowserAutomationStatus() {
+  try {
+    const response = await fetch('/api/browser-automation/status');
+    if (response.ok) renderBrowserAutomation(await response.json());
+  } catch {}
+}
+
 async function saveWorkflow() {
   const name = document.getElementById('workflowName').value.trim();
   const apps = document.getElementById('workflowApps').value.trim();
@@ -1777,7 +2730,7 @@ async function saveWorkflow() {
     ['workflowName', 'workflowApps', 'workflowUrls', 'workflowFolder']
       .forEach(id => document.getElementById(id).value = '');
     showToast('Workflow saved');
-    loadSettings();
+    await refreshSavedState();
   } catch (e) {
     showToast('Workflow save failed');
   }
@@ -1792,7 +2745,7 @@ async function deleteWorkflow(name) {
     });
     const data = await response.json();
     showToast(data.ok ? 'Workflow deleted' : (data.error || 'Workflow not found'));
-    loadSettings();
+    await refreshSavedState();
   } catch (e) {
     showToast('Workflow delete failed');
   }
@@ -1827,7 +2780,7 @@ async function deleteIntentMemory(id) {
       body: JSON.stringify({ id })
     });
     showToast('Memory deleted');
-    loadSettings();
+    await refreshSavedState();
   } catch (e) {
     showToast('Delete failed');
   }
@@ -1857,7 +2810,7 @@ async function addIntentMemory() {
     keyEl.value = '';
     valueEl.value = '';
     showToast('Memory saved');
-    loadSettings();
+    await refreshSavedState();
   } catch (e) {
     showToast('Memory save failed');
   }
@@ -1867,7 +2820,7 @@ async function clearIntentMemory() {
   try {
     await fetch('/api/intent-memory/clear', { method: 'POST' });
     showToast('Memory cleared');
-    loadSettings();
+    await refreshSavedState();
   } catch (e) {
     showToast('Clear failed');
   }
@@ -1883,7 +2836,7 @@ async function deleteLearnedMapping(id) {
     });
     const data = await response.json();
     showToast(data.ok ? 'Mapping deleted' : 'Mapping not found');
-    loadSettings();
+    await refreshSavedState();
   } catch (e) {
     showToast('Mapping delete failed');
   }
@@ -1893,21 +2846,478 @@ async function clearLearnedMappings() {
   try {
     const response = await fetch('/api/learned-mappings/clear', { method: 'POST' });
     const data = await response.json();
-    showToast(`Cleared ${data.removed || 0} mappings`);
-    loadSettings();
+    showToast(`Cleared ${data.removed || 0} mappings. Workflows kept.`);
+    await refreshSavedState();
   } catch (e) {
     showToast('Mapping clear failed');
   }
 }
 
+function renderPaidAccount(account) {
+  const enabled = account.enabled === true;
+  document.querySelectorAll('.paid-only').forEach(element => {
+    element.style.display = enabled ? '' : 'none';
+  });
+  const apiSection = document.getElementById('set-api-key');
+  const aiSection = document.getElementById('ai');
+  const apiLink = document.querySelector('#sidebar-nav a[href="#set-api-key"]');
+  const aiLink = document.querySelector('#sidebar-nav a[href="#ai"]');
+  const hideByok = enabled && account.emergencyByokEnabled !== true;
+  [apiSection, aiSection, apiLink, aiLink].forEach(element => {
+    if (element) element.style.display = hideByok ? 'none' : '';
+  });
+  showPersonalApiSection();
+  if (!enabled) return;
+
+  const browserAiHint = document.getElementById('browserAutomationAiHint');
+  if (browserAiHint) {
+    browserAiHint.textContent = 'Requires the Chrome Helper, Google sign-in, and usable account credits. It never silently launches a separate browser profile.';
+  }
+  const translateProviderHint = document.getElementById('translateProviderHint');
+  if (translateProviderHint) {
+    translateProviderHint.textContent = 'Translation uses your keyboard.wtf account and is included in server-authoritative usage.';
+  }
+
+  const signedIn = account.signedIn === true;
+  if (!signedIn) {
+    account = {
+      ...account,
+      email: '', displayName: '', status: 'signed_out', planId: 'none',
+      planDisplayName: 'No active plan', planAmountMinor: 0,
+      subscriptionStatus: 'none', subscriptionCancellationStatus: 'none',
+      subscriptionCancelsAt: null, availableCreditMicros: 0, reservedCreditMicros: 0,
+      cycleUsageCreditMicros: 0, subscriptionAllowanceCreditMicros: 0,
+      subscriptionOriginalCreditMicros: 0, subscriptionReservedCreditMicros: 0,
+      subscriptionConsumedCreditMicros: 0, topUpCreditMicros: 0, cycleEndsAt: null,
+      deviceId: '', deviceName: '', devices: [], recentUsage: [], recentPurchases: []
+    };
+  }
+  const accountLoading = account.accountLoading === true;
+  const signInPending = account.signInPending === true;
+  const signInState = String(account.signInState || 'idle');
+  paidLastSignInState = signInState;
+  const available = Number(account.availableCreditMicros || 0);
+  const subscriptionAvailable = Number(account.subscriptionAllowanceCreditMicros || 0);
+  const subscriptionReserved = Number(account.subscriptionReservedCreditMicros || 0);
+  const subscriptionOriginal = Number(account.subscriptionOriginalCreditMicros || 0);
+  const subscriptionUsed = Number(account.subscriptionConsumedCreditMicros || 0);
+  const totalUsable = available + Number(account.reservedCreditMicros || 0);
+  const subscriptionRemaining = subscriptionAvailable + subscriptionReserved;
+  const remaining = subscriptionOriginal > 0 ? subscriptionRemaining : totalUsable;
+  const used = subscriptionOriginal > 0
+    ? subscriptionUsed
+    : Number(account.cycleUsageCreditMicros || 0);
+  const total = subscriptionOriginal > 0
+    ? subscriptionOriginal
+    : Math.max(0, remaining + used);
+  const percentage = total > 0 ? Math.max(0, Math.min(100, remaining * 100 / total)) : 0;
+  document.getElementById('paidAccountDot').className = signedIn && !accountLoading ? 'dot ok' : 'dot warn';
+  document.getElementById('paidPlanDot').className = !accountLoading && account.planId && account.planId !== 'none' ? 'dot ok' : 'dot';
+  document.getElementById('paidDeviceDot').className = account.deviceId ? 'dot ok' : 'dot';
+  document.getElementById('paidCycleDot').className = account.cycleEndsAt ? 'dot ok' : 'dot';
+  document.getElementById('paidAccountIdentity').textContent = signedIn
+    ? (accountLoading ? 'Checking account...' : (account.displayName || account.email))
+    : 'Signed out';
+  document.getElementById('paidIdentityCard').style.display = signedIn && !accountLoading ? '' : 'none';
+  document.getElementById('paidDisplayName').textContent = account.displayName || 'Google user';
+  document.getElementById('paidEmail').textContent = account.email || '';
+  document.getElementById('paidAvatar').textContent = (account.displayName || account.email || 'K').trim().charAt(0).toUpperCase();
+  document.getElementById('paidPlan').textContent = accountLoading
+    ? 'Loading authoritative plan...'
+    : `${account.planDisplayName || formatPaidPlan(account.planId)} - ${formatPaidStatus(account.subscriptionStatus || 'none')}`;
+  document.getElementById('paidDevice').textContent = accountLoading
+    ? 'Checking session...'
+    : account.deviceName
+      ? `${account.deviceName} - ${account.devicePlatform || 'Windows'}`
+      : 'Not connected';
+  document.getElementById('paidCycle').textContent = accountLoading
+    ? 'Checking billing cycle...'
+    : account.subscriptionCancellationStatus === 'scheduled' && account.subscriptionCancelsAt
+    ? `Cancels ${new Date(account.subscriptionCancelsAt).toLocaleDateString()} - no further charge`
+    : account.cycleEndsAt
+    ? `Renews ${new Date(account.cycleEndsAt).toLocaleDateString()}`
+    : 'No active cycle';
+  document.getElementById('paidBalance').textContent = accountLoading ? '...' : `${percentage.toFixed(1)}%`;
+  document.getElementById('paidBalanceBar').style.width = accountLoading ? '0' : `${percentage}%`;
+  document.getElementById('paidUsage').textContent = accountLoading
+    ? 'Loading server-owned usage...'
+    : `${formatPaidCredits(used)} used this cycle - ${formatPaidCredits(available)} usable now`
+      + (Number(account.reservedCreditMicros || 0) > 0
+        ? ` - ${formatPaidCredits(account.reservedCreditMicros)} reserved pending settlement` : '');
+  const signInMessage = signInState === 'starting'
+    ? 'Starting secure Google sign-in...'
+    : signInState === 'waiting_for_google'
+      ? 'Waiting for Google sign-in in your browser...'
+      : signInState === 'cancelling'
+        ? 'Cancelling sign-in...'
+        : signInState === 'cancelled'
+          ? 'Sign-in was cancelled. Try again when ready.'
+          : signInState === 'expired'
+            ? 'The sign-in request expired. Try again to open one fresh request.'
+          : signInState === 'failed'
+            ? (account.lastError || 'Sign-in could not be completed. Try again.')
+            : '';
+  document.getElementById('paidAccountMessage').textContent = signInMessage
+    || account.lastError
+    || (accountLoading ? 'Restoring your secure account and current usage...' : '')
+    || (signedIn
+      ? (available > 0 ? 'Account active.' : 'This account has zero usable credits. Subscribe or manage your plan before running AI tasks.')
+      : 'Sign in with Google to connect this Windows device.');
+  document.getElementById('paidSignIn').style.display = signedIn ? 'none' : '';
+  document.getElementById('paidSignIn').disabled = signInPending;
+  document.getElementById('paidSignIn').textContent = signInPending
+    ? 'Waiting for Google sign-in...'
+    : (['failed', 'cancelled', 'expired'].includes(signInState) ? 'Try again' : 'Sign in with Google');
+  document.getElementById('paidCancelSignIn').style.display = signInPending ? '' : 'none';
+  document.getElementById('paidCancelSignIn').disabled = false;
+  document.getElementById('paidRefresh').disabled = !signedIn;
+  document.getElementById('paidBilling').disabled = !signedIn || accountLoading;
+  const canCancelSubscription = signedIn
+    && !accountLoading
+    && String(account.subscriptionStatus || '').toLowerCase() === 'active'
+    && String(account.subscriptionCancellationStatus || '').toLowerCase() !== 'scheduled';
+  document.getElementById('paidCancelSubscription').style.display = canCancelSubscription ? '' : 'none';
+  document.getElementById('paidCancelSubscription').disabled = !canCancelSubscription;
+  document.getElementById('paidManage').disabled = !signedIn || accountLoading;
+  document.getElementById('paidSwitchAccount').style.display = signedIn ? '' : 'none';
+  document.getElementById('paidSignOut').style.display = signedIn ? '' : 'none';
+  document.getElementById('paidSignOutAll').style.display = signedIn ? '' : 'none';
+  renderPaidRows('paidRecentUsage', account.recentUsage, 'No recent usage.', row =>
+    `${formatPaidActivity(row.activityType)} - ${formatPaidCredits(row.chargedCreditMicros)} credits - ${formatPaidStatus(row.accountingStatus !== 'settled' ? row.accountingStatus : row.outcome)} - ${formatPaidDate(row.createdAt)}`);
+  renderPaidRows('paidRecentPurchases', account.recentPurchases, 'No payments yet.', row =>
+    `${row.displayName || 'Jarvis Monthly'} - ${formatPaidStatus(row.status)} - ${formatPaidMoney(row.amountMinor, row.currency)} - ${formatPaidDate(row.createdAt)}`);
+  renderPaidDevices(account.devices);
+  schedulePaidSignInRefresh(signInPending);
+}
+
+function schedulePaidSignInRefresh(pending) {
+  if (paidSignInPollTimer) {
+    clearTimeout(paidSignInPollTimer);
+    paidSignInPollTimer = undefined;
+  }
+  if (!pending) return;
+  paidSignInPollTimer = setTimeout(async () => {
+    paidSignInPollTimer = undefined;
+    await loadSettings();
+  }, 1500);
+}
+
+function renderPaidRows(containerId, rows, emptyText, formatter) {
+  const container = document.getElementById(containerId);
+  container.replaceChildren();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    container.textContent = emptyText;
+    return;
+  }
+  const list = document.createElement('ul');
+  list.style.margin = '0';
+  list.style.paddingLeft = '20px';
+  for (const row of rows.slice(0, 10)) {
+    const item = document.createElement('li');
+    item.textContent = formatter(row);
+    item.style.marginBottom = '6px';
+    list.appendChild(item);
+  }
+  container.appendChild(list);
+}
+
+function renderPaidDevices(rows) {
+  const container = document.getElementById('paidDevices');
+  container.replaceChildren();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    container.textContent = 'No connected devices.';
+    return;
+  }
+  for (const row of rows.slice(0, 10)) {
+    const item = document.createElement('div');
+    item.style.display = 'flex';
+    item.style.alignItems = 'center';
+    item.style.justifyContent = 'space-between';
+    item.style.gap = '12px';
+    item.style.marginBottom = '8px';
+    const description = document.createElement('span');
+    description.textContent = `${row.name || 'Windows device'}${row.isCurrent ? ' (this device)' : ''} - ${row.platform || 'Windows'} - ${formatPaidStatus(row.status)} - last seen ${formatPaidDate(row.lastSeenAt)}`;
+    item.appendChild(description);
+    if (!row.isCurrent && String(row.status || '').toLowerCase() !== 'revoked') {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'button-link';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', () => paidAccountAction('revoke-device', { deviceId: row.deviceId }));
+      item.appendChild(remove);
+    }
+    container.appendChild(item);
+  }
+}
+
+function formatPaidPlan(planId) {
+  if (!planId || planId === 'none') return 'No active plan';
+  return planId.includes('monthly') ? 'Jarvis Monthly' : 'Subscription';
+}
+
+function formatPaidActivity(activityType) {
+  return ({
+    fast_text: 'Jarvis command',
+    agent_planner: 'Jarvis command',
+    smart_writing: 'Smart Writing',
+    selected_text: 'Selected text',
+    browser_planner: 'Browser task',
+    screen_reasoning: 'Screen reasoning',
+    live_audio: 'Jarvis Live',
+    ai_request: 'Jarvis AI'
+  })[String(activityType || '').toLowerCase()] || 'Jarvis AI';
+}
+
+function formatPaidStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  return ({
+    none: 'None', active: 'Active', completed: 'Completed', provider_completed: 'Completed', verified: 'Completed',
+    settled: 'Completed', cancelled: 'Cancelled', provider_cancelled: 'Cancelled', failed: 'Failed', provider_failed: 'Failed', captured: 'Paid',
+    paid: 'Paid', charged: 'Paid', refunded: 'Refunded', reconciliation_pending: 'Finalizing usage...'
+  })[status] || (status ? status.replaceAll('_', ' ') : 'Recorded');
+}
+
+function formatPaidDate(value) {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString();
+}
+
+function formatPaidMoney(amountMinor, currency) {
+  const code = String(currency || 'INR').toUpperCase();
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: code }).format(Number(amountMinor || 0) / 100);
+  } catch {
+    return `${code} ${(Number(amountMinor || 0) / 100).toFixed(2)}`;
+  }
+}
+
+let verifiedUpdateOffer = null;
+
+async function saveUpdateChannel() {
+  verifiedUpdateOffer = null;
+  document.getElementById('manualUpdateLink').style.display = 'none';
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updateChannel: document.getElementById('updateChannel').value })
+    });
+    document.getElementById('installUpdateButton').style.display = 'none';
+    document.getElementById('updateStatus').textContent = 'Channel saved. Check again to verify the signed feed.';
+  } catch (error) {
+    showToast(error.message || 'Update channel could not be saved');
+  }
+}
+
+async function checkForUpdates() {
+  const status = document.getElementById('updateStatus');
+  const install = document.getElementById('installUpdateButton');
+  install.style.display = 'none';
+  document.getElementById('manualUpdateLink').style.display = 'none';
+  verifiedUpdateOffer = null;
+  status.textContent = 'Verifying signed update metadata…';
+  try {
+    const response = await fetch('/api/updates/check', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Update check failed');
+    if (!data.available) {
+      status.textContent = data.message || 'keyboard.wtf is up to date.';
+      return;
+    }
+    if (typeof data.consentToken !== 'string' || !/^[0-9a-f]{64}$/i.test(data.consentToken)) {
+      throw new Error('The update approval could not be verified. Check again before installing.');
+    }
+    if (data.installationReady === false) {
+      status.textContent = `Version ${data.version} is available. Download from the official website, finish active work, close keyboard.wtf and run the normal installer. Your saved settings are preserved. ${data.releaseNotes || ''}`;
+      document.getElementById('manualUpdateLink').style.display = '';
+      return;
+    }
+    verifiedUpdateOffer = { version: data.version, channel: data.channel, consentToken: data.consentToken };
+    status.textContent = `Version ${data.version} is available on ${data.channel}. ${data.releaseNotes || ''}`;
+    install.style.display = '';
+  } catch (error) {
+    status.textContent = error.message || 'The signed update feed could not be verified.';
+  }
+}
+
+async function installVerifiedUpdate() {
+  const status = document.getElementById('updateStatus');
+  const approved = verifiedUpdateOffer;
+  if (!approved) {
+    status.textContent = 'Check for updates and approve a verified version before installing.';
+    return;
+  }
+  if (!confirm(`Download, verify, and install keyboard.wtf ${approved.version} on ${approved.channel}? Finish active work before installing.`)) return;
+  verifiedUpdateOffer = null;
+  document.getElementById('installUpdateButton').style.display = 'none';
+  status.textContent = 'Downloading and verifying the installer…';
+  try {
+    const response = await fetch('/api/updates/install', {
+      method: 'POST',
+      headers: {
+        'X-Keyboard-Wtf-Settings-Action': 'explicit-user-action',
+        'X-Keyboard-Wtf-Update-Consent': approved.consentToken
+      }
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Update failed');
+    status.textContent = data.message || 'The verified installer has started.';
+  } catch (error) {
+    status.textContent = error.message || 'The update could not be installed.';
+  }
+}
+
+function formatPaidCredits(micros) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(micros || 0) / 1000000);
+}
+
+async function paidAccountAction(action, payload = null) {
+  const beginsSignIn = action === 'sign-in' || action === 'switch-account';
+  const settingsScroller = document.getElementById('main-scroll');
+  const refreshScrollTop = action === 'refresh' ? settingsScroller?.scrollTop : null;
+  if (beginsSignIn && paidSignInRequestPending) return;
+  if (action === 'sign-out-all'
+      && !confirm('Sign out every keyboard.wtf device and session for this account?')) return;
+  if (action === 'cancel-subscription'
+      && !confirm('Cancel renewal at the end of your current paid billing cycle? You will keep access until then.')) return;
+  const buttons = Array.from(document.querySelectorAll('#account-billing button'));
+  if (beginsSignIn) {
+    paidSignInRequestPending = true;
+    document.getElementById('paidSignIn').disabled = true;
+    if (action === 'sign-in') document.getElementById('paidSignIn').textContent = 'Waiting for Google sign-in...';
+    document.getElementById('paidCancelSignIn').style.display = '';
+    document.getElementById('paidCancelSignIn').disabled = false;
+    document.getElementById('paidAccountMessage').textContent = 'Waiting for Google sign-in in your browser...';
+  } else if (action !== 'cancel-sign-in') {
+    buttons.forEach(button => button.disabled = true);
+  }
+  try {
+    const requestAction = action === 'sign-in'
+      && ['failed', 'cancelled', 'expired'].includes(paidLastSignInState)
+      ? 'retry-sign-in'
+      : action;
+    const response = await fetch(`/api/paid/${requestAction}`, {
+      method: 'POST',
+      headers: {
+        'X-Keyboard-Wtf-Settings-Action': '1',
+        ...(payload ? { 'Content-Type': 'application/json' } : {})
+      },
+      body: payload ? JSON.stringify(payload) : undefined
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Account action failed');
+    showToast(beginsSignIn
+      ? 'Account connected'
+      : action === 'cancel-sign-in'
+        ? 'Sign-in cancelled'
+        : 'Account updated');
+    await loadSettings();
+    if (refreshScrollTop !== null && settingsScroller) {
+      requestAnimationFrame(() => {
+        settingsScroller.scrollTop = refreshScrollTop;
+        window.refreshSettingsScrollSpy?.();
+      });
+    }
+  } catch (error) {
+    showToast(error.message || 'Account action failed');
+    await loadSettings();
+    if (refreshScrollTop !== null && settingsScroller) {
+      requestAnimationFrame(() => {
+        settingsScroller.scrollTop = refreshScrollTop;
+        window.refreshSettingsScrollSpy?.();
+      });
+    }
+  } finally {
+    if (beginsSignIn) paidSignInRequestPending = false;
+    if (action !== 'cancel-sign-in') buttons.forEach(button => button.disabled = false);
+  }
+}
+
+const hotkeyInputs = {
+  PushToTalk: 'hotkeyPushToTalk', Dictation: 'hotkeyDictation', Jarvis: 'hotkeyJarvis',
+  Cancel: 'hotkeyCancel', OpenSettings: 'hotkeyOpenSettings'
+};
+const hotkeyDefaults = {
+  PushToTalk: 'Ctrl+Alt+K', Dictation: 'Ctrl+Alt+D', Jarvis: 'Ctrl+Alt+Q',
+  Cancel: 'Ctrl+Alt+X', OpenSettings: 'Ctrl+Alt+,'
+};
+let recordingHotkeyAction;
+
+function hotkeyValues() {
+  return Object.fromEntries(Object.keys(hotkeyInputs).map(action =>
+    [action, configuredHotkeys[action] || hotkeyDefaults[action]]));
+}
+
+function recordedKeyName(event) {
+  if (event.key === ',') return ',';
+  if (event.key === ' ') return 'Space';
+  if (/^F(?:[1-9]|1[0-2])$/i.test(event.key)) return event.key.toUpperCase();
+  if (/^[a-z0-9]$/i.test(event.key)) return event.key.toUpperCase();
+  return ({ Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete', Insert: 'Insert',
+    Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+    ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' })[event.key];
+}
+
+function stopHotkeyRecording(message) {
+  recordingHotkeyAction = undefined;
+  Object.values(hotkeyInputs).forEach(id => document.getElementById(id).classList.remove('hotkey-recording'));
+  document.getElementById('hotkeyRecorderStatus').textContent = message || 'Choose Change shortcut, then press the new key combination.';
+}
+
+function recordHotkey(action) {
+  if (!(action in hotkeyInputs)) return;
+  recordingHotkeyAction = action;
+  const input = document.getElementById(hotkeyInputs[action]);
+  input.focus();
+  input.classList.add('hotkey-recording');
+  document.getElementById(`${hotkeyInputs[action]}Status`).textContent = 'Recording - press the new shortcut now. Escape cancels.';
+  document.getElementById('hotkeyRecorderStatus').textContent = `Recording ${action.replace(/([A-Z])/g, ' $1').trim()} - press Ctrl, Alt, or Windows plus a key. Press Escape alone to cancel.`;
+}
+
+document.addEventListener('keydown', async event => {
+  if (!recordingHotkeyAction) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) {
+    stopHotkeyRecording('Shortcut change cancelled.');
+    return;
+  }
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return;
+  if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+    document.getElementById('hotkeyRecorderStatus').textContent = 'Include Ctrl, Alt, or the Windows key so normal typing is never captured.';
+    return;
+  }
+  const key = recordedKeyName(event);
+  if (!key) {
+    document.getElementById('hotkeyRecorderStatus').textContent = 'That key is not supported. Try a letter, number, F1-F12, comma, navigation key, or Escape.';
+    return;
+  }
+  const parts = [];
+  if (event.ctrlKey) parts.push('Ctrl');
+  if (event.altKey) parts.push('Alt');
+  if (event.shiftKey) parts.push('Shift');
+  if (event.metaKey) parts.push('Win');
+  parts.push(key);
+  const action = recordingHotkeyAction;
+  const values = hotkeyValues();
+  values[action] = parts.join('+');
+  stopHotkeyRecording('Checking the shortcut with Windows...');
+  await saveHotkeyValues(values);
+}, true);
+
 async function hotkeysChanged() {
+  await saveHotkeyValues(hotkeyValues());
+}
+
+async function saveHotkeyValues(values) {
   const data = {
     hotkeys: {
-      pushToTalk: document.getElementById('hotkeyPushToTalk').value,
-      dictation: document.getElementById('hotkeyDictation').value,
-      jarvis: document.getElementById('hotkeyJarvis').value,
-      cancel: document.getElementById('hotkeyCancel').value,
-      openSettings: document.getElementById('hotkeyOpenSettings').value
+      pushToTalk: values.PushToTalk,
+      dictation: values.Dictation,
+      jarvis: values.Jarvis,
+      cancel: values.Cancel,
+      openSettings: values.OpenSettings
     }
   };
 
@@ -1920,22 +3330,39 @@ async function hotkeysChanged() {
     if (!resp.ok) {
       const error = await resp.json();
       showToast(error.error || 'Hotkey conflict');
+      stopHotkeyRecording(error.error || 'The old shortcut is still active.');
+      await loadSettings();
       return;
     }
     showToast('Hotkeys saved');
-    loadSettings();
+    stopHotkeyRecording('Shortcut changed. Only the new shortcut is active.');
+    await loadSettings();
   } catch (e) {
     showToast('Failed to save hotkeys');
+    stopHotkeyRecording('The shortcut could not be changed. The old shortcut is still active.');
+    await loadSettings();
   }
+}
+
+async function resetOneHotkey(action) {
+  if (!(action in hotkeyDefaults)) return;
+  const values = hotkeyValues();
+  values[action] = hotkeyDefaults[action];
+  await saveHotkeyValues(values);
 }
 
 async function resetHotkeys() {
   try {
-    await fetch('/api/hotkeys/reset', { method: 'POST' });
+    const response = await fetch('/api/hotkeys/reset', { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Defaults conflict with another application.');
     showToast('Hotkeys reset');
-    loadSettings();
+    stopHotkeyRecording('Default shortcuts restored.');
+    await loadSettings();
   } catch (e) {
-    showToast('Reset failed');
+    showToast(e.message || 'Reset failed');
+    stopHotkeyRecording('Defaults could not be registered. Existing shortcuts are unchanged.');
+    await loadSettings();
   }
 }
 
@@ -1988,7 +3415,7 @@ function applyMaxDuration(seconds) {
   const sel = document.getElementById('maxDuration');
   const input = document.getElementById('maxDurationCustom');
   const unit = document.getElementById('maxDurationUnit');
-  if ([30, 60, 90].includes(seconds)) {
+  if ([0, 30, 60, 90, 600].includes(seconds)) {
     sel.value = String(seconds);
     input.style.display = 'none';
     unit.style.display = 'none';
@@ -2145,7 +3572,7 @@ async function testScreenGuidance() {
   const btn = document.getElementById('screenTestBtn');
   const result = document.getElementById('screenTestResult');
   btn.disabled = true;
-  result.textContent = 'Capturing one screen image and asking Gemini...';
+  result.textContent = 'Analyzing your screen...';
   try {
     const resp = await fetch('/api/screen-guidance-test', {
       method: 'POST',
@@ -2154,7 +3581,7 @@ async function testScreenGuidance() {
     const data = await resp.json();
     result.textContent = data.ok
       ? (data.guidance || data.message || 'Screen guidance completed.')
-      : `Screen guidance unavailable: ${data.error || data.message || 'Check the Gemini API key.'}`;
+      : `Screen guidance unavailable: ${data.error || data.message || 'Check your connection and account status.'}`;
   } catch (e) {
     result.textContent = 'Screen guidance test failed: ' + e.message;
   } finally {
@@ -2184,13 +3611,32 @@ async function pollMicLevel() {
 
 window.addEventListener('beforeunload', () => {
   if (micTestActive) {
-    try { navigator.sendBeacon('/api/mic-test-stop'); } catch (e) {}
+    try {
+      fetch('/api/mic-test-stop', {
+        method: 'POST',
+        keepalive: true,
+      });
+    } catch (e) {}
   }
 });
 
 async function modelSizeChanged() {
   await settingChanged();
   await downloadModels();
+}
+
+let modelStatusRefreshTimer = null;
+function scheduleModelStatusRefresh(active) {
+  if (modelStatusRefreshTimer) {
+    clearTimeout(modelStatusRefreshTimer);
+    modelStatusRefreshTimer = null;
+  }
+  if (active) {
+    modelStatusRefreshTimer = setTimeout(() => {
+      modelStatusRefreshTimer = null;
+      loadSettings();
+    }, 1500);
+  }
 }
 
 async function downloadModels() {
@@ -2400,7 +3846,10 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('show'), 1800);
 }
 
-loadSettings();
+loadSettings().finally(() => window.finishInitialSettingsRoute?.());
+void connectSavedStateEvents();
+setInterval(refreshBrowserAutomationStatus, 2500);
 </script>
+<script type="module" src="/luma/settings-adapter.js"></script>
 </body>
 </html>

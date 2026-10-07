@@ -31,12 +31,12 @@ public class EmailDestination : IDestination
                 UseShellExecute = true,
             });
 
-            AppLog.Info($"Opened email client: to='{to}', cc='{cc}', subject='{subject}', body={body.Length} chars");
+            AppLog.Info($"Opened email client: recipientPresent={!string.IsNullOrEmpty(to)} ccPresent={!string.IsNullOrEmpty(cc)} subjectCharacters={subject.Length} bodyCharacters={body.Length}");
             return await Task.FromResult(true);
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Email destination failed: {ex.Message}");
+            AppLog.Error(ex, "Email destination failed");
             return false;
         }
     }

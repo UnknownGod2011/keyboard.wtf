@@ -42,7 +42,7 @@ public class SlackWebhookDestination : IDestination
             }
             catch (Exception ex)
             {
-                AppLog.Error($"Slack send failed: {ex.Message}");
+                AppLog.Error(ex, "Slack send failed");
                 return false;
             }
         }

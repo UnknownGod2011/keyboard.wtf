@@ -6,9 +6,14 @@ keyboard.wtf uses the following open-source components. Their licenses are repro
 
 ## NAudio
 
-Version 2.2.x
-Copyright (c) Mark Heath 2023
+Version 2.2.1
+Copyright 2020 Mark Heath
 https://github.com/naudio/NAudio
+
+The exact NAudio 2.2.1 `license.txt` carries the 2020 copyright above.
+The package metadata for NAudio and its Asio, Core, Midi, Wasapi, WinForms
+and WinMM 2.2.1 components separately declares "© Mark Heath 2023".
+Both declarations are retained here; one is not substituted for the other.
 
 Licensed under the MIT License:
 
@@ -38,8 +43,8 @@ Licensed under the Apache License, Version 2.0. You may obtain a copy of the Lic
 
 ## Whisper.net
 
-Version 1.9.x
-Copyright (c) 2023 sandrohanea
+Version 1.9.1
+Copyright (c) 2024 sandrohanea
 https://github.com/sandrohanea/whisper.net
 
 Licensed under the MIT License. See NAudio license text above for the full MIT License terms.
@@ -67,7 +72,7 @@ Licensed under the MIT License. See NAudio license text above for the full MIT L
 
 ## Piper Text-to-Speech
 
-Copyright (c) 2022 Rhasspy
+Copyright (c) 2022 Michael Hansen
 https://github.com/rhasspy/piper
 
 Licensed under the MIT License. See NAudio license text above for the full MIT License terms.
@@ -80,8 +85,17 @@ en_US-amy-medium (English)
 de_DE-thorsten-medium (German)
 https://huggingface.co/rhasspy/piper-voices
 
-Both voice models are licensed under Creative Commons Zero v1.0 Universal (CC0 1.0):
-https://creativecommons.org/publicdomain/zero/1.0/
+New voice downloads are pinned to the upstream revision
+`c10ece1aade47bb51c153c893d14e5bf8e5b7117`.
+
+- [Amy medium model card](https://huggingface.co/rhasspy/piper-voices/blob/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/amy/medium/MODEL_CARD): the dataset license refers to the linked Mimic 3 voice repository; the card does not declare a blanket CC0 license for these model weights.
+- [Thorsten medium model card](https://huggingface.co/rhasspy/piper-voices/blob/c10ece1aade47bb51c153c893d14e5bf8e5b7117/de/de_DE/thorsten/medium/MODEL_CARD): the dataset is identified as CC0. That statement is not treated here as independent clearance for all distributed model weights or their training lineage.
+
+Both cards describe fine-tuning from the Lessac medium voice. Commercial
+redistribution clearance and the complete required attribution/license text for
+these exact assets remain a public-release gate. The earlier blanket CC0 claim
+has been withdrawn; no voice, download or playback behavior is changed.
+This preparation notice is not a legal clearance or a completed package notice.
 
 ---
 

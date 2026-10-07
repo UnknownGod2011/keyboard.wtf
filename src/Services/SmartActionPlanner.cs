@@ -47,7 +47,7 @@ public sealed class SmartActionPlanner
         CancellationToken cancellationToken = default)
     {
         AppLog.Info("Smart action planning started");
-        var gemini = AiProviderRegistry.Get(AiProvider.Gemini) as GeminiProvider;
+        var gemini = AiProviderRegistry.Get(AiProvider.Gemini);
         var knownPlan = await TryPlanKnownActionAsync(transcript, gemini, cancellationToken);
         if (knownPlan != null)
         {
@@ -55,7 +55,7 @@ public sealed class SmartActionPlanner
             return knownPlan;
         }
 
-        if (gemini?.IsAvailable != true)
+        if (gemini is not IStructuredAiProvider structured || !structured.IsAvailable)
         {
             AppLog.Warning("Smart action planning using offline fallback");
             return FallbackPlan(transcript);
@@ -85,7 +85,7 @@ public sealed class SmartActionPlanner
 
         try
         {
-            var plan = await gemini.GenerateStructuredAsync<SmartActionPlan>(
+            var plan = await structured.GenerateStructuredAsync<SmartActionPlan>(
                 prompt,
                 ResponseSchema,
                 cancellationToken);
@@ -105,7 +105,7 @@ public sealed class SmartActionPlanner
 
     private static async Task<SmartActionPlan> TryPlanKnownActionAsync(
         string transcript,
-        GeminiProvider gemini,
+        IAiProvider gemini,
         CancellationToken cancellationToken)
     {
         var text = transcript?.Trim() ?? "";
@@ -138,7 +138,11 @@ public sealed class SmartActionPlanner
                     ? "Rewrite this as a concise, professional email body. Preserve every important fact. Return only the body."
                     : "Clean this spoken email into a clear, natural email body. Preserve the tone and meaning. Return only the body.";
                 body = await gemini
-                    .ReformatAsync(body, prompt, KeyboardWtfState.SelectedLanguage)
+                    .ReformatAsync(
+                        body,
+                        prompt,
+                        KeyboardWtfState.SelectedLanguage,
+                        cancellationToken)
                     .WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
             }
             catch (TimeoutException)

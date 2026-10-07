@@ -22,7 +22,7 @@ internal static class SecureStore
         if (string.IsNullOrEmpty(plaintext))
             return string.Empty;
         if (!OperatingSystem.IsWindows())
-            return plaintext;
+            throw new SecretPersistenceException();
 
         try
         {
@@ -30,10 +30,10 @@ internal static class SecureStore
             var protectedBytes = ProtectedData.Protect(bytes, Entropy, DataProtectionScope.CurrentUser);
             return EncryptedPrefix + Convert.ToBase64String(protectedBytes);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            AppLog.Warning(ex, "SecureStore.Protect failed, falling back to plaintext");
-            return plaintext;
+            AppLog.Warning("SecureStore protection failed; no plaintext fallback is permitted.");
+            throw new SecretPersistenceException();
         }
     }
 
@@ -92,4 +92,11 @@ internal static class SecureStore
             }
         }
     }
+}
+
+// Never attach an upstream message/inner exception that could contain a secret.
+internal sealed class SecretPersistenceException : InvalidOperationException
+{
+    internal const string SafeMessage = "Settings could not be saved securely. Your previous saved settings were preserved. Please try again.";
+    public SecretPersistenceException() : base(SafeMessage) { }
 }

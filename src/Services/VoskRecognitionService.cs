@@ -61,7 +61,7 @@ public sealed class VoskRecognitionService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Vosk recognition failed: {ex.Message}");
+            AppLog.Error(ex, "Vosk recognition failed");
             return string.Empty;
         }
     }

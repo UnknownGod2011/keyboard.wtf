@@ -39,7 +39,8 @@ public static class GuitarTunerService
             {
                 WaveFormat         = new WaveFormat(SampleRate, 16, 1),
                 BufferMilliseconds = 80,
-                DeviceNumber       = Math.Max(0, KeyboardWtfState.SelectedMicrophoneIndex)
+                DeviceNumber       = AudioRecorderService.ResolveDeviceNumber(
+                    KeyboardWtfState.SelectedMicrophoneIndex)
             };
             _waveIn.DataAvailable += OnData;
             _waveIn.StartRecording();
@@ -53,7 +54,7 @@ public static class GuitarTunerService
         }
         catch (Exception ex)
         {
-            AppLog.Error($"GuitarTuner: WaveIn failed: {ex.Message}");
+            AppLog.Error(ex, "GuitarTuner: WaveIn failed");
             _waveIn?.Dispose();
             _waveIn = null;
             return false;

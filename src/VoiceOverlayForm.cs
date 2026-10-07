@@ -7,6 +7,7 @@ using KeyboardWtf.Services;
 internal sealed class VoiceOverlayForm : Form
 {
     private readonly AudioRecorderService _audioRecorder;
+    private readonly int _uiThreadId;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Label _statusLabel;
     private readonly Label _detailLabel;
@@ -14,10 +15,12 @@ internal sealed class VoiceOverlayForm : Form
     private Color _orbColor = Color.FromArgb(90, 90, 90);
     private VoiceUiPhase _lastPhase = VoiceUiPhase.Idle;
     private double _lastLevelDb = -96;
+    private long _orbPhaseStarted = Environment.TickCount64;
 
     public VoiceOverlayForm(AudioRecorderService audioRecorder)
     {
         _audioRecorder = audioRecorder;
+        _uiThreadId = Environment.CurrentManagedThreadId;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
@@ -68,6 +71,22 @@ internal sealed class VoiceOverlayForm : Form
         _timer = new System.Windows.Forms.Timer { Interval = 80 };
         _timer.Tick += (_, _) => RefreshState();
         _timer.Start();
+        KeyboardWtfState.UiChanged += HandleUiChanged;
+    }
+
+    /// <summary>
+    /// Creates the native window handle on the application's UI thread before
+    /// background services can publish their first status update. Without this,
+    /// WinForms can report InvokeRequired=false for a handle-less form and the
+    /// first worker-thread update may accidentally create the window there.
+    /// </summary>
+    internal void InitializeUiThreadHandle()
+    {
+        if (Environment.CurrentManagedThreadId != _uiThreadId)
+            throw new InvalidOperationException("The voice overlay must be initialized on the UI thread.");
+
+        if (!IsHandleCreated)
+            _ = Handle;
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -76,10 +95,13 @@ internal sealed class VoiceOverlayForm : Form
     {
         get
         {
+            const int wsExTopmost = 0x00000008;
             const int wsExToolWindow = 0x00000080;
             const int wsExNoActivate = 0x08000000;
             var cp = base.CreateParams;
-            cp.ExStyle |= wsExToolWindow | wsExNoActivate;
+            // Put the invariant on every native handle, including a recreated
+            // one. This keeps Jarvis above ordinary apps without activating it.
+            cp.ExStyle |= wsExTopmost | wsExToolWindow | wsExNoActivate;
             return cp;
         }
     }
@@ -100,14 +122,53 @@ internal sealed class VoiceOverlayForm : Form
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
+            KeyboardWtfState.UiChanged -= HandleUiChanged;
             _timer.Dispose();
+        }
         base.Dispose(disposing);
+    }
+
+    private void HandleUiChanged()
+    {
+        if (IsDisposed)
+            return;
+
+        // A handle-less WinForms control cannot reliably determine whether a
+        // caller is on another thread. Never let a background status event
+        // become the thread that creates this form's native window.
+        if (!IsHandleCreated)
+        {
+            if (Environment.CurrentManagedThreadId != _uiThreadId)
+                return;
+            InitializeUiThreadHandle();
+        }
+
+        if (InvokeRequired)
+        {
+            try
+            {
+                BeginInvoke((Action)RefreshState);
+            }
+            catch (InvalidOperationException) when (IsDisposed || !IsHandleCreated)
+            {
+                // Shutdown raced a best-effort visual status update.
+            }
+            return;
+        }
+
+        RefreshState();
+        // Force the tiny overlay to paint before a slow audio driver blocks
+        // the UI thread while opening the selected microphone.
+        Update();
     }
 
     private void RefreshState()
     {
         var phase = KeyboardWtfState.UiPhase;
-        if (phase == VoiceUiPhase.Idle)
+        var taskDetail = KeyboardWtfState.LongTaskDisplayDetail();
+        var hasTask = !string.IsNullOrWhiteSpace(KeyboardWtfState.LongTaskDetail);
+        if (phase == VoiceUiPhase.Idle && !hasTask)
         {
             if (Visible)
                 Hide();
@@ -118,7 +179,7 @@ internal sealed class VoiceOverlayForm : Form
         var terminal = phase is VoiceUiPhase.Done
             or VoiceUiPhase.Cancelled
             or VoiceUiPhase.Error;
-        if (terminal && DateTime.UtcNow - KeyboardWtfState.UiPhaseStartedUtc > TimeSpan.FromSeconds(3.2))
+        if (terminal && !hasTask && DateTime.UtcNow - KeyboardWtfState.UiPhaseStartedUtc > TimeSpan.FromSeconds(3.2))
         {
             if (Visible)
                 Hide();
@@ -132,11 +193,16 @@ internal sealed class VoiceOverlayForm : Form
             Show();
         }
 
-        _statusLabel.Text = KeyboardWtfState.UiTitle;
-        _detailLabel.Text = BuildDetail(phase, KeyboardWtfState.UiDetail);
+        _statusLabel.Text = hasTask && phase == VoiceUiPhase.Idle ? KeyboardWtfState.AssistantName : KeyboardWtfState.UiTitle;
+        _detailLabel.Text = BuildDetail(phase, KeyboardWtfState.UiDetail, taskDetail: taskDetail);
         _orbColor = PhaseColor(phase);
 
         if (phase != _lastPhase)
+        {
+            _orbPhaseStarted = Environment.TickCount64;
+            _orb.Invalidate();
+        }
+        else if (phase == VoiceUiPhase.Speaking)
             _orb.Invalidate();
         else if (phase == VoiceUiPhase.Listening
             && Math.Abs(KeyboardWtfState.InputLevelDb - _lastLevelDb) > 2)
@@ -154,14 +220,28 @@ internal sealed class VoiceOverlayForm : Form
         using var brush = new SolidBrush(_orbColor);
         e.Graphics.FillEllipse(brush, 2, 2, 38, 38);
 
-        if (KeyboardWtfState.UiPhase != VoiceUiPhase.Listening)
+        var diameter = InnerOrbDiameter(KeyboardWtfState.UiPhase,
+            KeyboardWtfState.InputLevelDb, Environment.TickCount64 - _orbPhaseStarted);
+        if (diameter == 0)
             return;
 
-        var normalized = Math.Clamp((KeyboardWtfState.InputLevelDb + 60) / 60, 0, 1);
-        var diameter = 12 + (int)(normalized * 17);
         var offset = (42 - diameter) / 2;
         using var center = new SolidBrush(Color.White);
         e.Graphics.FillEllipse(center, offset, offset, diameter, diameter);
+    }
+
+    internal static int InnerOrbDiameter(VoiceUiPhase phase, double inputLevelDb, long elapsedMs)
+    {
+        // Listening keeps its real microphone meter. Speaking is a small
+        // activity pulse on the existing UI timer, not a fabricated output
+        // level or an audio callback; playback and interruption stay untouched.
+        var normalized = phase switch
+        {
+            VoiceUiPhase.Listening => Math.Clamp((inputLevelDb + 60) / 60, 0, 1),
+            VoiceUiPhase.Speaking => (1 - Math.Cos(Math.Max(0, elapsedMs) % 1200 * Math.PI / 600)) / 2,
+            _ => -1,
+        };
+        return normalized < 0 ? 0 : 12 + (int)(normalized * 17);
     }
 
     private void PositionOverlay()
@@ -190,14 +270,21 @@ internal sealed class VoiceOverlayForm : Form
         return singleLine.Length <= maxLength ? singleLine : singleLine[..(maxLength - 1)] + "...";
     }
 
-    private static string BuildDetail(VoiceUiPhase phase, string detail)
+    internal static string BuildDetail(VoiceUiPhase phase, string detail, TimeSpan? elapsedOverride = null, string taskDetail = null)
     {
-        var elapsed = Math.Max(0, (int)(DateTime.UtcNow - KeyboardWtfState.UiPhaseStartedUtc).TotalSeconds);
+        if (!string.IsNullOrWhiteSpace(taskDetail))
+            return Shorten(taskDetail, 88);
+        var elapsed = Math.Max(0, (int)(elapsedOverride
+            ?? DateTime.UtcNow - KeyboardWtfState.UiPhaseStartedUtc).TotalSeconds);
+        var activeDetail = (phase is VoiceUiPhase.Thinking or VoiceUiPhase.Executing)
+            && elapsed >= 4
+            ? $"{detail} — working on it"
+            : detail;
         return phase switch
         {
             VoiceUiPhase.Listening => Shorten(detail, 88),
             VoiceUiPhase.Transcribing or VoiceUiPhase.Thinking or VoiceUiPhase.Executing =>
-                Shorten($"{detail}  {elapsed}s - Ctrl+Alt+X cancels", 88),
+                Shorten($"{activeDetail}  {elapsed}s - Ctrl+Alt+X cancels", 88),
             _ => Shorten(detail, 88),
         };
     }

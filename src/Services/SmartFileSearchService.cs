@@ -1,6 +1,7 @@
 namespace KeyboardWtf.Services;
 
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 public enum FileResolutionStatus
 {
@@ -18,6 +19,8 @@ public sealed class FileSearchCandidate
     public DateTimeOffset ModifiedAt { get; init; }
     public double Score { get; init; }
     public string RootLabel { get; init; } = "";
+    internal int NameMatchRank { get; init; }
+    internal int Depth { get; init; }
 }
 
 public sealed class FileSearchResult
@@ -82,6 +85,8 @@ public sealed class SmartFileSearchService
         var cleanQuery = CleanQuery(query);
         if (cleanQuery.Length == 0)
             return new FileSearchResult { Status = FileResolutionStatus.NotFound };
+        var requestedLocation = ResolveRequestedLocation(cleanQuery, location);
+        var requestedRoot = ResolveLocationPath(requestedLocation);
 
         var learnedKind = includeFolders && !includeFiles
             ? LearnedMappingKind.Folder
@@ -91,7 +96,9 @@ public sealed class SmartFileSearchService
         if (learnedKind != null)
         {
             var learned = _mappings.FindExact(learnedKind.Value, cleanQuery);
-            if (learned != null && ExistsForKind(learned))
+            if (learned != null
+                && ExistsForKind(learned)
+                && IsInsideRequestedRoot(learned.Target, requestedRoot))
             {
                 var candidate = CandidateFromPath(learned.Target, "Learned", 1);
                 return new FileSearchResult
@@ -108,7 +115,9 @@ public sealed class SmartFileSearchService
             foreach (var kind in new[] { LearnedMappingKind.File, LearnedMappingKind.Folder })
             {
                 var learned = _mappings.FindExact(kind, cleanQuery);
-                if (learned != null && ExistsForKind(learned))
+                if (learned != null
+                    && ExistsForKind(learned)
+                    && IsInsideRequestedRoot(learned.Target, requestedRoot))
                 {
                     var candidate = CandidateFromPath(learned.Target, "Learned", 1);
                     return new FileSearchResult
@@ -127,6 +136,7 @@ public sealed class SmartFileSearchService
                 || (kind == LearnedMappingKind.Folder && includeFolders))
             .SelectMany(kind => _mappings.Search(cleanQuery, kind, 4))
             .Where(ExistsForKind)
+            .Where(entry => IsInsideRequestedRoot(entry.Target, requestedRoot))
             .Select(entry => new
             {
                 Entry = entry,
@@ -168,29 +178,45 @@ public sealed class SmartFileSearchService
             };
         }
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-        timeoutCts.CancelAfter(timeout ?? DefaultTimeout);
+        var roots = BuildRoots(requestedLocation);
+        FileSearchCandidate direct;
+        try
+        {
+            direct = TryResolveDirectChild(
+                cleanQuery,
+                roots,
+                includeFiles,
+                includeFolders,
+                token);
+        }
+        catch (OperationCanceledException)
+        {
+            return new FileSearchResult { Status = FileResolutionStatus.Cancelled };
+        }
+        if (direct != null)
+        {
+            return new FileSearchResult
+            {
+                Status = FileResolutionStatus.Found,
+                Best = direct,
+                Candidates = [direct],
+                SearchSummary = RootSummary(roots),
+            };
+        }
+
         try
         {
             return await Task.Run(
                 () => SearchCore(
                     cleanQuery,
-                    location,
+                    roots,
                     includeFiles,
                     includeFolders,
                     Math.Clamp(maxDepth, 1, 10),
                     Math.Clamp(maxResults, 1, 25),
-                    timeoutCts.Token),
-                timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!token.IsCancellationRequested)
-        {
-            return new FileSearchResult
-            {
-                Status = FileResolutionStatus.NotFound,
-                TimedOut = true,
-                SearchSummary = "common user folders with a bounded five-second search",
-            };
+                    timeout ?? DefaultTimeout,
+                    token),
+                token);
         }
         catch (OperationCanceledException)
         {
@@ -228,20 +254,49 @@ public sealed class SmartFileSearchService
         }
     }
 
+    public static bool TryOpenContainingFolder(string path, out string error)
+    {
+        error = "";
+        var expanded = Environment.ExpandEnvironmentVariables((path ?? "").Trim().Trim('"'));
+        var folder = Directory.Exists(expanded)
+            ? expanded
+            : File.Exists(expanded)
+                ? Path.GetDirectoryName(expanded)
+                : "";
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+        {
+            error = "That file or folder no longer exists.";
+            return false;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = folder, UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
     public IReadOnlyList<string> SearchRootPaths() => BuildRoots("").Select(root => root.Path).ToArray();
 
     private FileSearchResult SearchCore(
         string query,
-        string location,
+        IReadOnlyList<SearchRoot> roots,
         bool includeFiles,
         bool includeFolders,
         int maxDepth,
         int maxResults,
+        TimeSpan timeout,
         CancellationToken token)
     {
-        var roots = BuildRoots(location);
         var candidates = new List<FileSearchCandidate>();
         var scanned = 0;
+        var timedOut = false;
+        var stopwatch = Stopwatch.StartNew();
         var wantsLatest = query.Contains("latest", StringComparison.OrdinalIgnoreCase)
             || query.Contains("recent", StringComparison.OrdinalIgnoreCase)
             || query.Contains("last ", StringComparison.OrdinalIgnoreCase);
@@ -255,18 +310,37 @@ public sealed class SmartFileSearchService
 
         while (queue.Count > 0 && scanned < DefaultMaxScannedEntries)
         {
+            if (stopwatch.Elapsed >= timeout)
+            {
+                timedOut = true;
+                break;
+            }
             token.ThrowIfCancellationRequested();
             var current = queue.Dequeue();
+            // Breadth-first traversal has now examined every root's direct
+            // children. A normalized exact folder at depth zero cannot be
+            // outranked by any deeper entry under the existing name/depth
+            // ordering. Keep all root-level peers for normal ambiguity checks.
+            if (includeFolders && !includeFiles && current.Depth > 0
+                && candidates.Any(candidate => candidate.NameMatchRank == 4 && candidate.Depth == 0))
+                break;
             IEnumerable<string> entries;
             try
             {
-                entries = Directory.EnumerateFileSystemEntries(current.Path);
+                entries = includeFolders && !includeFiles
+                    ? Directory.EnumerateDirectories(current.Path)
+                    : Directory.EnumerateFileSystemEntries(current.Path);
             }
             catch (UnauthorizedAccessException) { continue; }
             catch (IOException) { continue; }
 
             foreach (var entry in entries)
             {
+                if (stopwatch.Elapsed >= timeout)
+                {
+                    timedOut = true;
+                    break;
+                }
                 token.ThrowIfCancellationRequested();
                 scanned++;
                 if (scanned >= DefaultMaxScannedEntries)
@@ -283,8 +357,14 @@ public sealed class SmartFileSearchService
 
                 if ((isDirectory && includeFolders) || (!isDirectory && includeFiles))
                 {
-                    var score = ScoreEntry(query, entry, isDirectory, current.Root.Priority, typeHint, wantsLatest);
-                    if (score >= 0.42)
+                    var match = ScoreEntry(
+                        query,
+                        entry,
+                        isDirectory,
+                        current.Root.Priority,
+                        typeHint,
+                        wantsLatest);
+                    if (match.Score >= 0.42)
                     {
                         candidates.Add(new FileSearchCandidate
                         {
@@ -292,8 +372,10 @@ public sealed class SmartFileSearchService
                             Name = Path.GetFileName(entry),
                             IsDirectory = isDirectory,
                             ModifiedAt = GetModifiedAt(entry, isDirectory),
-                            Score = score,
+                            Score = match.Score,
                             RootLabel = current.Root.Label,
+                            NameMatchRank = match.NameMatchRank,
+                            Depth = current.Depth,
                         });
                     }
                 }
@@ -304,8 +386,13 @@ public sealed class SmartFileSearchService
         }
 
         var ranked = candidates
-            .OrderByDescending(candidate => candidate.Score)
+            .OrderByDescending(candidate => candidate.NameMatchRank)
+            .ThenBy(candidate => candidate.Depth)
+            .ThenByDescending(candidate => candidate.Score)
             .ThenByDescending(candidate => candidate.ModifiedAt)
+            // Overlapping search roots can enumerate the same existing path.
+            // Keep its strongest existing ranking metadata, not a second choice.
+            .DistinctBy(candidate => NormalizeAbsolutePath(candidate.Path), StringComparer.OrdinalIgnoreCase)
             .Take(maxResults)
             .ToArray();
         if (ranked.Length == 0)
@@ -314,28 +401,193 @@ public sealed class SmartFileSearchService
             {
                 Status = FileResolutionStatus.NotFound,
                 ScannedEntries = scanned,
+                TimedOut = timedOut,
                 SearchSummary = RootSummary(roots),
             };
         }
 
         var best = ranked[0];
+        // Strong folder-name matches should not be padded with unrelated fuzzy
+        // names. Distinct peers at the strongest rank still require clarification.
+        if (includeFolders && !includeFiles && best.NameMatchRank >= 3)
+            ranked = ranked.Where(candidate => candidate.NameMatchRank == best.NameMatchRank).ToArray();
         var second = ranked.Length > 1 ? ranked[1] : null;
-        var highConfidence = best.Score >= 0.88
-            || (best.Score >= 0.79 && (second == null || best.Score - second.Score >= 0.11));
+        var equallyStrong = second != null
+            && second.NameMatchRank == best.NameMatchRank
+            && second.Depth == best.Depth
+            && Math.Abs(best.Score - second.Score) < 0.08;
+        var highConfidence = !equallyStrong
+            && (best.NameMatchRank >= 4
+                || (best.NameMatchRank == 3
+                    && (second == null
+                        || best.NameMatchRank > second.NameMatchRank
+                        || best.Score - second.Score >= 0.08))
+                || (best.Score >= 0.88
+                    || (best.Score >= 0.79
+                        && (second == null || best.Score - second.Score >= 0.11))));
         return new FileSearchResult
         {
             Status = highConfidence ? FileResolutionStatus.Found : FileResolutionStatus.Ambiguous,
             Best = best,
             Candidates = ranked,
             ScannedEntries = scanned,
+            TimedOut = timedOut,
             SearchSummary = RootSummary(roots),
         };
+    }
+
+    private static FileSearchCandidate TryResolveDirectChild(
+        string query,
+        IReadOnlyList<SearchRoot> roots,
+        bool includeFiles,
+        bool includeFolders,
+        CancellationToken token)
+    {
+        var needle = SearchNeedle(query);
+        if (string.IsNullOrWhiteSpace(needle)
+            || needle.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            return null;
+
+        var compactNeedle = needle.Replace(" ", "", StringComparison.Ordinal);
+        var literalNames = new[]
+        {
+            needle,
+            needle.Replace(' ', '.'),
+            needle.Replace(' ', '_'),
+            needle.Replace(' ', '-'),
+            includeFolders && !includeFiles && compactNeedle.Length >= 6 ? compactNeedle : needle,
+        }.Distinct(StringComparer.OrdinalIgnoreCase);
+        FileSearchCandidate folderMatch = null;
+        foreach (var root in roots.OrderByDescending(root => root.Priority))
+        {
+            token.ThrowIfCancellationRequested();
+            foreach (var literalName in literalNames)
+            {
+                var direct = Path.Combine(root.Path, literalName);
+                if ((includeFolders && Directory.Exists(direct))
+                    || (includeFiles && File.Exists(direct)))
+                {
+                    var match = CandidateFromPath(ExistingPathSpelling(direct), root.Label, 1);
+                    if (!includeFolders || includeFiles)
+                        return match;
+                    // The folder-only shortcut must not silently choose the
+                    // first root when another distinct exact folder also exists.
+                    if (folderMatch != null
+                        && !string.Equals(
+                            NormalizeAbsolutePath(folderMatch.Path),
+                            NormalizeAbsolutePath(match.Path),
+                            StringComparison.OrdinalIgnoreCase))
+                        return null;
+                    folderMatch ??= match;
+                }
+
+                if (!includeFiles || Path.HasExtension(literalName))
+                    continue;
+                foreach (var extension in new[]
+                         {
+                             ".txt", ".md", ".pdf", ".doc", ".docx", ".rtf",
+                             ".ppt", ".pptx", ".xls", ".xlsx", ".csv",
+                             ".png", ".jpg", ".jpeg", ".webp",
+                         })
+                {
+                    var withExtension = direct + extension;
+                    if (File.Exists(withExtension))
+                        return CandidateFromPath(ExistingPathSpelling(withExtension), root.Label, 1);
+                }
+            }
+        }
+        if (folderMatch == null)
+            return null;
+
+        // Literal/compact direct lookup is only decisive if another root-level
+        // spelling cannot denote the same requested name. Let normal ranking
+        // decide between distinct peers, while overlapping roots remain one path.
+        foreach (var root in roots)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                foreach (var peer in Directory.EnumerateDirectories(root.Path))
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (string.Equals(
+                            NormalizeAbsolutePath(peer),
+                            NormalizeAbsolutePath(folderMatch.Path),
+                            StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var normalizedPeer = FuzzyMatcher.Normalize(Path.GetFileName(peer));
+                    if (string.Equals(normalizedPeer, needle, StringComparison.Ordinal)
+                        || (compactNeedle.Length >= 6
+                            && string.Equals(
+                                normalizedPeer.Replace(" ", "", StringComparison.Ordinal),
+                                compactNeedle,
+                                StringComparison.Ordinal)))
+                        return null;
+                }
+            }
+            catch (UnauthorizedAccessException) { }
+            catch (IOException) { }
+        }
+
+        return folderMatch;
+    }
+
+    private static string NormalizeAbsolutePath(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private static string ExistingPathSpelling(string path)
+    {
+        try
+        {
+            var parent = Path.GetDirectoryName(path);
+            var name = Path.GetFileName(path);
+            if (string.IsNullOrWhiteSpace(parent) || string.IsNullOrWhiteSpace(name))
+                return path;
+            return Directory.EnumerateFileSystemEntries(parent, name, SearchOption.TopDirectoryOnly)
+                .FirstOrDefault(candidate =>
+                    string.Equals(candidate, path, StringComparison.OrdinalIgnoreCase))
+                ?? path;
+        }
+        catch
+        {
+            return path;
+        }
     }
 
     private IReadOnlyList<SearchRoot> BuildRoots(string location)
     {
         if (_rootOverrides != null)
-            return _rootOverrides.Where(root => Directory.Exists(root.Path)).ToArray();
+        {
+            var available = _rootOverrides
+                .Where(root => Directory.Exists(root.Path))
+                .ToArray();
+            if (string.IsNullOrWhiteSpace(location))
+                return available;
+
+            var explicitOverridePath = Environment.ExpandEnvironmentVariables(
+                location.Trim().Trim('"'));
+            if (Directory.Exists(explicitOverridePath))
+                return [new SearchRoot(
+                    Path.GetFullPath(explicitOverridePath),
+                    Path.GetFileName(explicitOverridePath.TrimEnd(
+                        Path.DirectorySeparatorChar,
+                        Path.AltDirectorySeparatorChar)),
+                    10)];
+
+            var normalizedOverrideLocation = FuzzyMatcher.Normalize(location);
+            return available
+                .Where(root =>
+                    string.Equals(
+                        FuzzyMatcher.Normalize(root.Label),
+                        normalizedOverrideLocation,
+                        StringComparison.Ordinal)
+                    || string.Equals(
+                        FuzzyMatcher.Normalize(Path.GetFileName(root.Path)),
+                        normalizedOverrideLocation,
+                        StringComparison.Ordinal))
+                .ToArray();
+        }
 
         var explicitPath = Environment.ExpandEnvironmentVariables((location ?? "").Trim().Trim('"'));
         if (Directory.Exists(explicitPath))
@@ -401,7 +653,73 @@ public sealed class SmartFileSearchService
             : null;
     }
 
-    private static double ScoreEntry(
+    internal static string ResolveRequestedLocation(string query, string location)
+    {
+        var provided = Environment.ExpandEnvironmentVariables((location ?? "").Trim().Trim('"'));
+        if (!string.IsNullOrWhiteSpace(provided))
+            return provided;
+
+        var normalized = FuzzyMatcher.Normalize(query);
+        if (normalized.Length == 0)
+            return "";
+
+        var scoped = Regex.Match(
+            normalized,
+            @"\b(?:on|in|from|under|within|inside)\s+(?:my\s+)?(?<folder>desktop|downloads?|documents?|pictures?|photos?|images?|videos?|music|onedrive|one\s+drive)\b",
+            RegexOptions.CultureInvariant);
+        if (!scoped.Success)
+        {
+            scoped = Regex.Match(
+                normalized,
+                @"\bmy\s+(?<folder>desktop|downloads?|documents?|pictures?|photos?|images?|videos?|music|onedrive|one\s+drive)\b",
+                RegexOptions.CultureInvariant);
+        }
+        if (!scoped.Success)
+            return "";
+
+        return FuzzyMatcher.Normalize(scoped.Groups["folder"].Value) switch
+        {
+            "download" => "downloads",
+            "document" => "documents",
+            "picture" or "photo" or "photos" or "image" or "images" => "pictures",
+            "video" => "videos",
+            "one drive" => "onedrive",
+            var folder => folder,
+        };
+    }
+
+    private static string ResolveLocationPath(string location)
+    {
+        var expanded = Environment.ExpandEnvironmentVariables((location ?? "").Trim().Trim('"'));
+        if (Directory.Exists(expanded))
+            return Path.GetFullPath(expanded);
+        return ResolveKnownFolder(expanded)?.Path ?? "";
+    }
+
+    private static bool IsInsideRequestedRoot(string target, string requestedRoot)
+    {
+        if (string.IsNullOrWhiteSpace(requestedRoot))
+            return true;
+        try
+        {
+            var fullRoot = Path.GetFullPath(requestedRoot).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            var fullTarget = Path.GetFullPath(target).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            return string.Equals(fullTarget, fullRoot, StringComparison.OrdinalIgnoreCase)
+                || fullTarget.StartsWith(
+                    fullRoot + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static (double Score, int NameMatchRank) ScoreEntry(
         string query,
         string path,
         bool isDirectory,
@@ -410,19 +728,52 @@ public sealed class SmartFileSearchService
         bool wantsLatest)
     {
         var name = Path.GetFileNameWithoutExtension(path);
-        var fuzzy = Math.Max(FuzzyMatcher.Score(query, name), FuzzyMatcher.Score(query, Path.GetFileName(path)));
+        var searchNeedle = SearchNeedle(query);
+        var fuzzy = new[]
+        {
+            FuzzyMatcher.Score(query, name),
+            FuzzyMatcher.Score(query, Path.GetFileName(path)),
+            FuzzyMatcher.Score(searchNeedle, name),
+            FuzzyMatcher.Score(searchNeedle, Path.GetFileName(path)),
+        }.Max();
         var modified = GetModifiedAt(path, isDirectory);
         var ageDays = Math.Max(0, (DateTimeOffset.Now - modified).TotalDays);
         var recency = Math.Exp(-ageDays / 45);
         var type = TypeScore(path, isDirectory, typeHint);
         var root = Math.Clamp(rootPriority / 10.0, 0, 1);
-        var exactPartial = FuzzyMatcher.Normalize(name).Contains(FuzzyMatcher.Normalize(RemoveSearchWords(query)), StringComparison.Ordinal)
-            ? 1
-            : 0;
+        var normalizedName = FuzzyMatcher.Normalize(name);
+        var normalizedNeedle = FuzzyMatcher.Normalize(searchNeedle);
+        // Speech can split a compound name that the filesystem stores as one
+        // token ("data ops" versus "dataops"). Only a substantial compact
+        // fragment receives partial-name rank; ordinary short fragments must
+        // not become confident matches for unrelated files.
+        var compactNeedle = normalizedNeedle.Replace(" ", "", StringComparison.Ordinal);
+        var compactName = normalizedName.Replace(" ", "", StringComparison.Ordinal);
+        var exactPartial = normalizedNeedle.Length > 0
+            && (normalizedName.Contains(normalizedNeedle, StringComparison.Ordinal)
+                || (compactNeedle.Length >= 6
+                    && compactName.Contains(compactNeedle, StringComparison.Ordinal)))
+                ? 1
+                : 0;
+        var exactName = normalizedNeedle.Length > 0
+            && string.Equals(normalizedName, normalizedNeedle, StringComparison.Ordinal)
+                ? 1
+                : 0;
 
-        var score = fuzzy * 0.62 + type * 0.12 + root * 0.08 + exactPartial * 0.08;
+        var normalizedFileName = FuzzyMatcher.Normalize(Path.GetFileName(path));
+        var nameMatchRank = exactName == 1
+            || (normalizedNeedle.Length > 0
+                && string.Equals(normalizedFileName, normalizedNeedle, StringComparison.Ordinal))
+                ? 4
+                : exactPartial == 1
+                    ? 3
+                    : fuzzy >= 0.72
+                        ? 2
+                        : 1;
+
+        var score = fuzzy * 0.60 + type * 0.10 + root * 0.07 + exactPartial * 0.08 + exactName * 0.08;
         score += recency * (wantsLatest ? 0.25 : 0.1);
-        return Math.Clamp(score, 0, 1);
+        return (Math.Clamp(score, 0, 1), nameMatchRank);
     }
 
     private static double TypeScore(string path, bool isDirectory, string hint)
@@ -461,17 +812,25 @@ public sealed class SmartFileSearchService
         return "";
     }
 
-    private static string RemoveSearchWords(string query)
+    internal static string SearchNeedle(string query)
     {
+        var normalized = Regex.Replace(
+            FuzzyMatcher.Normalize(query),
+            @"\bone drive\b",
+            " ",
+            RegexOptions.CultureInvariant);
         var ignored = new HashSet<string>(StringComparer.Ordinal)
         {
-            "open", "find", "search", "for", "the", "my", "latest", "recent", "last", "file",
-            "folder", "image", "photo", "picture", "video", "document", "inside", "from",
-            "downloaded", "used", "recently", "called", "named",
+            "open", "find", "search", "look", "locate", "show", "for", "the", "a", "an", "my",
+            "me", "please", "to", "on", "in", "at", "under", "within", "latest", "recent", "last",
+            "file", "folder", "directory", "image", "photo", "picture", "video", "document", "inside",
+            "from", "downloaded", "used", "recently", "called", "named", "desktop", "downloads",
+            "documents", "pictures", "videos", "music", "onedrive",
         };
-        return string.Join(" ", FuzzyMatcher.Normalize(query)
+        var needle = string.Join(" ", normalized
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(word => !ignored.Contains(word)));
+        return string.IsNullOrWhiteSpace(needle) ? normalized : needle;
     }
 
     private static string CleanQuery(string query) =>

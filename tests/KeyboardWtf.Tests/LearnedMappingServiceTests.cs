@@ -48,6 +48,40 @@ public sealed class LearnedMappingServiceTests : IDisposable
         Assert.Equal(LearnedMappingService.MaxEntries, service.Snapshot().Count);
     }
 
+    [Fact]
+    public void ExclusivePreferenceReplacesSupersededKindInOneDurableRecord()
+    {
+        var service = new LearnedMappingService(_path);
+        service.Load();
+        service.Remember(
+            LearnedMappingKind.App,
+            "My service",
+            "appx:Example.App_123!App",
+            "Example App");
+
+        service.RememberExclusive(
+            LearnedMappingKind.Link,
+            "my-service",
+            "https://example.com/app",
+            "Example web",
+            LearnedMappingKind.App,
+            LearnedMappingKind.Link);
+
+        var reloaded = new LearnedMappingService(_path);
+        reloaded.Load();
+        Assert.Null(reloaded.FindExact(LearnedMappingKind.App, "my service"));
+        Assert.Equal(
+            "https://example.com/app",
+            reloaded.FindExact(LearnedMappingKind.Link, "MY_service")?.Target);
+        Assert.Equal(
+            1,
+            reloaded.ForgetAcrossKinds(
+                "my service",
+                LearnedMappingKind.App,
+                LearnedMappingKind.Link));
+        Assert.Empty(reloaded.Snapshot());
+    }
+
     public void Dispose()
     {
         try
@@ -56,5 +90,21 @@ public sealed class LearnedMappingServiceTests : IDisposable
                 Directory.Delete(_directory, true);
         }
         catch { }
+    }
+
+    [Fact]
+    public void Live_link_capabilities_are_bounded_and_do_not_expose_stored_targets()
+    {
+        var service = new LearnedMappingService(_path);
+        Assert.Equal("", service.BuildLinkAliasPromptDigest());
+        for (var i = 0; i < 80; i++)
+            service.Remember(LearnedMappingKind.Link, new string('x', 65) + i, $"https://example.org/private?token=secret-{i}");
+        service.Remember(LearnedMappingKind.Workflow, "not-a-link", "separate workflow");
+        var digest = service.BuildLinkAliasPromptDigest();
+        Assert.True(digest.Length < 1100);
+        Assert.Contains("open_url", digest);
+        Assert.DoesNotContain("secret-", digest);
+        Assert.DoesNotContain("not-a-link", digest);
+        Assert.DoesNotContain("example.org", digest);
     }
 }

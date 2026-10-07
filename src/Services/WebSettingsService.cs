@@ -4,15 +4,21 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Security.Cryptography;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using KeyboardWtf.Models;
+using KeyboardWtf.Helpers;
+using KeyboardWtf.Services.BrowserAutomationV2;
+using KeyboardWtf.Services.Ai.Backends;
+using KeyboardWtf.Services.PaidStaging;
+using KeyboardWtf.Services.Updates;
 using NAudio.Wave;
 
-public sealed class WebSettingsService : IDisposable
+public sealed partial class WebSettingsService : IDisposable
 {
     private static WebSettingsService _instance;
     private static readonly object _lock = new();
@@ -29,6 +35,13 @@ public sealed class WebSettingsService : IDisposable
     private JarvisActionHistoryService _jarvisHistory;
     private LearnedMappingService _learnedMappings;
     private JarvisAutomationService _jarvisAutomation;
+    private BrowserAutomationCoordinator _browserAutomation;
+    private PaidAccountService _paidAccount;
+    private readonly BrowserNativeHostInstaller _browserNativeHostInstaller = new();
+    private readonly SecureUpdateService _secureUpdates = new();
+    private readonly VerifiedUpdateConsent _updateConsent = new();
+    private readonly SemaphoreSlim _updateLock = new(1, 1);
+    private readonly string _settingsActionToken = CreateSettingsActionToken();
     private string _settingsHtml;
 
     // Live microphone meter state
@@ -56,14 +69,17 @@ public sealed class WebSettingsService : IDisposable
         }
     }
 
-    public void Initialize(
+    internal void Initialize(
         KeyboardWtfApp app,
         SettingsService settings,
         HotkeyService hotkeys,
         IntentMemoryService intentMemory,
         JarvisActionHistoryService jarvisHistory,
         LearnedMappingService learnedMappings,
-        JarvisAutomationService jarvisAutomation)
+        JarvisAutomationService jarvisAutomation,
+        BrowserAutomationCoordinator browserAutomation,
+        PaidAccountService paidAccount = null,
+        PersonalApiSettingsController personalApiSettings = null)
     {
         _app = app;
         _settings = settings;
@@ -72,6 +88,11 @@ public sealed class WebSettingsService : IDisposable
         _jarvisHistory = jarvisHistory;
         _learnedMappings = learnedMappings;
         _jarvisAutomation = jarvisAutomation;
+        _browserAutomation = browserAutomation;
+        _paidAccount = paidAccount;
+        _personalApiSettings = personalApiSettings;
+        _savedStateNotifications?.Dispose();
+        _savedStateNotifications = new(_settings, _learnedMappings, _intentMemory);
         _settingsHtml = LoadSettingsHtml();
     }
 
@@ -93,7 +114,7 @@ public sealed class WebSettingsService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Failed to start web server: {ex.Message}");
+            AppLog.Error(ex, "Failed to start web server");
             _listener = null;
         }
     }
@@ -113,7 +134,7 @@ public sealed class WebSettingsService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Failed to open browser: {ex.Message}");
+            AppLog.Error(ex, "Failed to open browser");
         }
     }
 
@@ -130,7 +151,7 @@ public sealed class WebSettingsService : IDisposable
             catch (HttpListenerException) { break; }
             catch (Exception ex)
             {
-                AppLog.Error($"Web server error: {ex.Message}");
+                AppLog.Error(ex, "Web server error");
             }
         }
     }
@@ -139,23 +160,66 @@ public sealed class WebSettingsService : IDisposable
     {
         var req = context.Request;
         var resp = context.Response;
+        // Settings cannot be embedded by another page, including error responses.
+        // Keep its existing inline scripts and action authorization unchanged.
+        resp.Headers["Content-Security-Policy"] = "frame-ancestors 'none'";
+        resp.Headers["X-Frame-Options"] = "DENY";
+        IDisposable finiteUpdateWork = null;
 
         try
         {
-            // Security: only serve localhost
-            if (!req.IsLocal)
+            // A hostile website can issue requests to localhost. Locality is
+            // therefore necessary but not sufficient authorization.
+            if (!IsExpectedLoopbackRequest(req))
             {
                 resp.StatusCode = 403;
                 resp.Close();
                 return;
             }
 
+            if (IsStateChangingMethod(req.HttpMethod)
+                && !await ValidateStateChangingRequestAsync(req, resp))
+                return;
+
             var path = req.Url.AbsolutePath;
             var method = req.HttpMethod;
+
+            // Partial finite-request ownership only. Persistent resources and
+            // detached child workers need their own owners before install can
+            // use the gate. Preserve authorization BEFORE work admission.
+            if (RequiresFiniteSettingsUpdateWork(method, path)
+                && _app != null
+                && !_app.UpdateWorkAdmission.TryAcquire(out finiteUpdateWork))
+            {
+                resp.StatusCode = 409;
+                await WriteJson(resp, new
+                {
+                    ok = false,
+                    code = "update_installing",
+                    error = "An update is preparing installation. Please wait.",
+                });
+                return;
+            }
 
             if (path == "/" && method == "GET")
             {
                 await ServeHtml(resp);
+            }
+            else if (path.StartsWith("/luma/", StringComparison.Ordinal) && method == "GET")
+            {
+                await ServeLumaResource(resp, path);
+            }
+            else if (path == "/api/luma/context" && method == "GET")
+            {
+                await ServeLumaContext(req, resp);
+            }
+            else if (path == "/api/luma/live-token" && method == "POST")
+            {
+                await ServeLumaLiveToken(req, resp);
+            }
+            else if (path == "/browser-automation-fixture" && method == "GET")
+            {
+                await ServeEmbeddedHtml(resp, "web/browser-automation-fixture.html");
             }
             else if (path == "/api/settings" && method == "GET")
             {
@@ -165,11 +229,44 @@ public sealed class WebSettingsService : IDisposable
             {
                 await SaveSettings(req, resp);
             }
+            else if (path == "/api/settings/large-saved-setup/dismiss" && method == "POST")
+            {
+                _settings.DismissLargeSavedSetupWarning();
+                await WriteJson(resp, new { ok = true });
+            }
+            else if (path == "/api/saved-state" && method == "GET")
+            {
+                await ServeSavedState(req, resp);
+            }
+            else if (path == "/api/saved-state/events" && method == "GET")
+            {
+                await ServeSavedStateEvents(req, resp);
+            }
             else if (path == "/api/hotkeys/reset" && method == "POST")
             {
-                _settings?.ResetHotkeys();
-                _app?.RegisterHotkeys();
-                await WriteJson(resp, new { ok = true });
+                string error = null;
+                if (_app?.TryResetHotkeys(out error) == true)
+                    await WriteJson(resp, new { ok = true });
+                else
+                {
+                    resp.StatusCode = 409;
+                    await WriteJson(resp, new { ok = false, error = error ?? "Hotkeys could not be reset." });
+                }
+            }
+            else if (path.StartsWith("/api/personal-ai/", StringComparison.Ordinal) && method == "POST")
+            {
+                await HandlePersonalApiSettings(req, resp, path);
+            }
+            else if (path.StartsWith("/api/paid/", StringComparison.Ordinal)
+                && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await HandlePaidAccountAction(req, path, resp);
             }
             else if (path == "/api/intent-memory/delete" && method == "POST")
             {
@@ -195,7 +292,9 @@ public sealed class WebSettingsService : IDisposable
             }
             else if (path == "/api/learned-mappings/clear" && method == "POST")
             {
-                var removed = _learnedMappings?.Clear() ?? 0;
+                // Workflow rows belong to the authoritative workflow owner.
+                // Bulk clearing ordinary mappings must preserve those routines.
+                var removed = ClearOrdinarySavedMappings(_learnedMappings);
                 await WriteJson(resp, new { ok = true, removed });
             }
             else if (path == "/api/jarvis-workflow/delete" && method == "POST")
@@ -204,8 +303,122 @@ public sealed class WebSettingsService : IDisposable
             }
             else if (path == "/api/jarvis/stop" && method == "POST")
             {
-                _app?.Commands?.CancelCurrent();
+                if (_app?.Commands != null)
+                    await _app.Commands.CancelCurrentAndWaitAsync();
                 await WriteJson(resp, new { ok = true });
+            }
+            else if (path == "/api/app/restart" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+
+                var restartError = "";
+                var restarted = _app != null
+                    && _app.RequestRestart(out restartError);
+                await WriteJson(resp, new
+                {
+                    ok = restarted,
+                    error = restarted ? "" : restartError,
+                });
+            }
+            else if (path == "/api/app/uninstall" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+
+                await LaunchUninstaller(req, resp);
+            }
+            else if (path == "/api/updates/check" && method == "GET")
+            {
+                await CheckForUpdate(resp);
+            }
+            else if (path == "/api/updates/install" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await DownloadAndInstallUpdate(req, resp);
+            }
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+            else if (path == "/api/private-audit/recording" && method == "POST")
+            {
+                await HandlePrivateRecordingAudit(req, resp);
+            }
+#endif
+            else if (path == "/api/jarvis/text-turn" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await SendJarvisTextTurn(req, resp);
+            }
+            else if (path == "/api/browser-automation/status" && method == "GET")
+            {
+                await ServeBrowserAutomationStatus(resp);
+            }
+            else if (path == "/api/browser-automation/consent" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await SaveBrowserAutomationConsent(req, resp);
+            }
+            else if (path == "/api/browser-helper/connect" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await ConnectBrowserHelper(resp);
+            }
+            else if (path == "/api/browser-helper/reconnect" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await ReconnectBrowserHelper(resp);
+            }
+            else if (path == "/api/browser-helper/test" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await TestBrowserHelper(resp);
+            }
+            else if (path == "/api/browser-automation/control" && method == "POST")
+            {
+                if (!HasSettingsActionHeader(req))
+                {
+                    resp.StatusCode = 403;
+                    await WriteJson(resp, new { ok = false, error = "Settings action header required." });
+                    return;
+                }
+                await ControlBrowserAutomation(req, resp);
             }
             else if (path == "/api/microphones" && method == "GET")
             {
@@ -312,9 +525,19 @@ public sealed class WebSettingsService : IDisposable
                 resp.Close();
             }
         }
+        catch (SecretPersistenceException)
+        {
+            AppLog.Warning("Settings storage failed; returning a sanitized failure response.");
+            try
+            {
+                resp.StatusCode = 500;
+                await WriteJson(resp, new { ok = false, code = "settings_storage_failed", error = SecretPersistenceException.SafeMessage });
+            }
+            catch { }
+        }
         catch (Exception ex)
         {
-            AppLog.Error($"Request handler error: {ex.Message}");
+            AppLog.Error(ex, "Request handler error");
             try
             {
                 resp.StatusCode = 500;
@@ -322,13 +545,33 @@ public sealed class WebSettingsService : IDisposable
             }
             catch { }
         }
+        finally { finiteUpdateWork?.Dispose(); }
     }
+
+    // Do not infer lifetime from HTTP verb: passive POST snapshots and the
+    // long-lived saved-state SSE stream must not prevent idle installation.
+    // Excluded task/resource/control/update ingress remains a separate gate.
+    internal static bool RequiresFiniteSettingsUpdateWork(string method, string path) =>
+        method == "POST" && path is
+            "/api/luma/live-token" or "/api/settings" or "/api/settings/large-saved-setup/dismiss"
+            or "/api/hotkeys/reset" or "/api/personal-ai/action"
+            or "/api/paid/sign-in" or "/api/paid/retry-sign-in" or "/api/paid/refresh"
+            or "/api/paid/revoke-device" or "/api/paid/cancel-subscription"
+            or "/api/paid/manage" or "/api/paid/billing"
+            or "/api/intent-memory/delete" or "/api/intent-memory/remember" or "/api/intent-memory/clear"
+            or "/api/jarvis-history/clear" or "/api/learned-mappings/delete" or "/api/learned-mappings/clear"
+            or "/api/jarvis-workflow/delete" or "/api/download-models" or "/api/tts/install"
+            or "/api/test-claude" or "/api/test-ai" or "/api/camera-test" or "/api/screen-guidance-test"
+            or "/api/browser-helper/connect" or "/api/browser-helper/reconnect"
+            or "/api/open-voice-notes" or "/api/pick-voice-notes-folder" or "/api/camera-open";
 
     private async Task ServeHtml(HttpListenerResponse resp)
     {
-        var html = _settingsHtml ?? "<h1>Settings page not found</h1>";
+        var html = InjectSettingsRequestGuard(
+            _settingsHtml ?? "<h1>Settings page not found</h1>");
         var buffer = Encoding.UTF8.GetBytes(html);
         resp.ContentType = "text/html; charset=utf-8";
+        resp.Headers[HttpResponseHeader.CacheControl] = "no-store";
         resp.ContentLength64 = buffer.Length;
         await resp.OutputStream.WriteAsync(buffer);
         resp.Close();
@@ -336,6 +579,7 @@ public sealed class WebSettingsService : IDisposable
 
     private async Task ServeSettings(HttpListenerResponse resp)
     {
+        var savedStateRevision = _savedStateNotifications?.Revision ?? 0;
         // TTS info is Windows-only (SAPI/Piper); give null on non-Windows to keep the API shape.
         var ttsBackend = OperatingSystem.IsWindows() ? TtsService.Instance.ActiveBackend.ToString() : "None";
 
@@ -350,6 +594,8 @@ public sealed class WebSettingsService : IDisposable
             whisperLoaded = _app?.SpeechRecognition?.IsWhisperLoaded ?? false,
             voskPresent = ModelManager.IsVoskPresent,
             whisperPresent = ModelManager.IsWhisperPresent,
+            modelsDownloading = KeyboardWtfState.IsDownloadingModels,
+            modelDownloadStatus = KeyboardWtfState.ModelDownloadStatus ?? "",
             modelsPath = ModelManager.ModelsBaseDir,
             claudeApiKey = MaskApiKey(KeyboardWtfState.ClaudeApiKey),
             claudeConfigured = KeyboardWtfState.IsClaudeAvailable,
@@ -412,6 +658,8 @@ public sealed class WebSettingsService : IDisposable
             geminiVoice = KeyboardWtfState.GeminiVoice,
             geminiVoices = SettingsService.GeminiVoices.Select(pair => new { name = pair.Key, style = pair.Value }).ToArray(),
             startWithWindows = _settings?.Current.StartWithWindows ?? true,
+            updateChannel = _settings?.Current.UpdateChannel ?? "stable",
+            settingsStorageWarning = _settings?.SettingsStorageWarning ?? "",
             startupExecutablePath = _app?.StartupExecutablePath ?? "",
             startupRegistered = WindowsStartupService.IsRegisteredFor(_app?.StartupExecutablePath ?? ""),
             startupRegisteredCommand = WindowsStartupService.RegisteredCommand(),
@@ -422,16 +670,31 @@ public sealed class WebSettingsService : IDisposable
             pendingSensitiveAction = _app?.Commands?.PendingSensitiveAction,
             preferredBrowser = _settings?.Current.PreferredBrowser ?? "",
             learnedMappings = _learnedMappings?.Snapshot() ?? Array.Empty<LearnedMappingEntry>(),
+            savedStateMappings = ProjectSavedMappings(
+                _learnedMappings?.Snapshot() ?? Array.Empty<LearnedMappingEntry>(),
+                (_settings?.Current.JarvisWorkflows ?? []).ToArray()),
+            savedStateRevision,
+            largeSavedSetup = _settings?.Current.LargeSavedSetupWarningDismissed != true
+                && SavedSetupCharacters(_settings?.Current.JarvisWorkflows, _learnedMappings?.Snapshot())
+                    >= LargeSavedSetupWarningCharacters,
+            browserAutomation = BrowserAutomationSettingsSnapshot(),
+            paidAccount = PaidAccountSettingsSnapshot(),
             featureStatus = new
             {
                 smartAppSearch = "Available",
                 smartFileSearch = "Available",
                 browserTargeting = "Available",
-                screenGuidance = string.IsNullOrWhiteSpace(KeyboardWtfState.GeminiApiKey)
-                    ? "Needs Gemini API key"
-                    : (_settings?.Current.JarvisPermissionMode == JarvisPermissionMode.AutoExecute
-                        ? "Available in auto-execute"
-                        : "Available with confirmation"),
+                screenGuidance = _paidAccount?.Enabled == true
+                    ? (!_paidAccount.IsSignedIn
+                        ? "Sign in with Google"
+                        : (_paidAccount.Account?.AvailableCreditMicros > 0
+                            ? "Available through your keyboard.wtf account"
+                            : "Subscribe or manage your plan"))
+                    : (string.IsNullOrWhiteSpace(KeyboardWtfState.GeminiApiKey)
+                        ? "Needs Gemini API key"
+                        : (_settings?.Current.JarvisPermissionMode == JarvisPermissionMode.AutoExecute
+                            ? "Available in auto-execute"
+                            : "Available with confirmation")),
                 cameraCapture = "One-shot photo capture available",
                 virtualDesktops = "Available",
                 windowsRecording = "Game Bar + region shortcuts available",
@@ -445,6 +708,7 @@ public sealed class WebSettingsService : IDisposable
         var json = JsonSerializer.Serialize(settings);
         var buffer = Encoding.UTF8.GetBytes(json);
         resp.ContentType = "application/json";
+        resp.Headers[HttpResponseHeader.CacheControl] = "no-store";
         resp.ContentLength64 = buffer.Length;
         await resp.OutputStream.WriteAsync(buffer);
         resp.Close();
@@ -457,6 +721,24 @@ public sealed class WebSettingsService : IDisposable
 
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
+
+        // Commit incoming secrets and their provider selection together, before
+        // any other setting can write. Never acknowledge/activate a failed key.
+        var secretUpdates = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in SettingsService.SecretSettingNames)
+        {
+            if (!root.TryGetProperty(name, out var valueElement)) continue;
+            var value = valueElement.GetString();
+            var webhook = name.EndsWith("WebhookUrl", StringComparison.Ordinal);
+            if (value != null && !value.StartsWith("••••", StringComparison.Ordinal)
+                && (webhook || value.Length > 0))
+                secretUpdates[name] = value;
+        }
+        AiProvider? requestedProvider = null;
+        if (root.TryGetProperty("aiProvider", out var requestedProviderElement)
+            && Enum.TryParse<AiProvider>(requestedProviderElement.GetString(), out var parsedProvider))
+            requestedProvider = parsedProvider;
+        _settings?.SaveSecretSettings(secretUpdates, requestedProvider);
 
         if (root.TryGetProperty("speechEngine", out var engineEl))
         {
@@ -480,7 +762,7 @@ public sealed class WebSettingsService : IDisposable
         if (root.TryGetProperty("maxRecordingSeconds", out var maxRecEl))
         {
             var maxRec = maxRecEl.GetInt32();
-            if (maxRec is >= 5 and <= 300)
+            if (maxRec == 0 || maxRec is >= 5 and <= 3600)
                 _settings?.SaveMaxRecordingSeconds(maxRec);
         }
 
@@ -488,61 +770,6 @@ public sealed class WebSettingsService : IDisposable
         {
             if (Enum.TryParse<WhisperModelSize>(modelSizeEl.GetString(), out var modelSize))
                 _settings?.SaveWhisperModelSize(modelSize);
-        }
-
-        if (root.TryGetProperty("aiProvider", out var providerEl))
-        {
-            if (Enum.TryParse<AiProvider>(providerEl.GetString(), out var provider))
-                _settings?.SaveAiProvider(provider);
-        }
-
-        if (root.TryGetProperty("claudeApiKey", out var claudeEl))
-        {
-            var key = claudeEl.GetString();
-            if (!string.IsNullOrEmpty(key) && !key.StartsWith("••••"))
-                _settings?.SaveClaudeApiKey(key);
-        }
-
-        if (root.TryGetProperty("openAiApiKey", out var openAiEl))
-        {
-            var key = openAiEl.GetString();
-            if (!string.IsNullOrEmpty(key) && !key.StartsWith("••••"))
-                _settings?.SaveOpenAiApiKey(key);
-        }
-
-        if (root.TryGetProperty("geminiApiKey", out var geminiEl))
-        {
-            var key = geminiEl.GetString();
-            if (!string.IsNullOrEmpty(key) && !key.StartsWith("••••"))
-                _settings?.SaveGeminiApiKey(key);
-        }
-
-        if (root.TryGetProperty("deepSeekApiKey", out var dsEl))
-        {
-            var key = dsEl.GetString();
-            if (!string.IsNullOrEmpty(key) && !key.StartsWith("••••"))
-                _settings?.SaveDeepSeekApiKey(key);
-        }
-
-        if (root.TryGetProperty("perplexityApiKey", out var pxEl))
-        {
-            var key = pxEl.GetString();
-            if (!string.IsNullOrEmpty(key) && !key.StartsWith("••••"))
-                _settings?.SavePerplexityApiKey(key);
-        }
-
-        if (root.TryGetProperty("slackWebhookUrl", out var slackEl))
-        {
-            var url = slackEl.GetString();
-            if (url != null && !url.StartsWith("••••"))
-                _settings?.SaveSlackWebhookUrl(url);
-        }
-
-        if (root.TryGetProperty("discordWebhookUrl", out var discordEl))
-        {
-            var url = discordEl.GetString();
-            if (url != null && !url.StartsWith("••••"))
-                _settings?.SaveDiscordWebhookUrl(url);
         }
 
         if (root.TryGetProperty("voiceNoteSavePath", out var vnPathEl))
@@ -583,11 +810,19 @@ public sealed class WebSettingsService : IDisposable
             _settings?.SaveStartWithWindows(startupEl.GetBoolean());
             _app?.SyncStartupRegistration();
         }
+        if (root.TryGetProperty("updateChannel", out var updateChannelEl))
+            _settings?.SaveUpdateChannel(updateChannelEl.GetString());
         if (root.TryGetProperty("jarvisPermissionMode", out var permissionEl)
             && Enum.TryParse<JarvisPermissionMode>(permissionEl.GetString(), out var permissionMode))
             _settings?.SaveJarvisPermissionMode(permissionMode);
         if (root.TryGetProperty("preferredBrowser", out var preferredBrowserEl))
             _settings?.SavePreferredBrowser(preferredBrowserEl.GetString() ?? "");
+        if (root.TryGetProperty("browserAutomationEnabled", out var browserEnabledEl))
+            _settings?.SaveBrowserAutomationEnabled(browserEnabledEl.GetBoolean());
+        if (root.TryGetProperty("browserAutomationModel", out var browserModelEl))
+            _settings?.SaveBrowserAutomationModel(browserModelEl.GetString());
+        if (root.TryGetProperty("browserAutomationMemoryEnabled", out var browserMemoryEl))
+            _settings?.SaveBrowserAutomationMemoryEnabled(browserMemoryEl.GetBoolean());
 
         if (root.TryGetProperty("jarvisWorkflow", out var workflowEl))
         {
@@ -637,8 +872,21 @@ public sealed class WebSettingsService : IDisposable
                 return;
             }
 
-            _settings?.SaveHotkeys(hotkeys);
-            _app?.RegisterHotkeys();
+            string registrationError = null;
+            if (_app?.TryUpdateHotkeys(hotkeys, out registrationError) != true)
+            {
+                resp.StatusCode = 409;
+                var error = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = registrationError ?? "The requested hotkeys could not be registered.",
+                }));
+                resp.ContentType = "application/json";
+                resp.ContentLength64 = error.Length;
+                await resp.OutputStream.WriteAsync(error);
+                resp.Close();
+                return;
+            }
         }
 
         var buffer = Encoding.UTF8.GetBytes("{\"ok\":true}");
@@ -719,6 +967,7 @@ public sealed class WebSettingsService : IDisposable
             using var doc = JsonDocument.Parse(body);
             var name = GetJsonString(doc.RootElement, "name");
             var removed = _settings?.DeleteWorkflow(name) ?? false;
+            _learnedMappings?.ForgetWorkflowReferences(name);
             await WriteJson(resp, new
             {
                 ok = removed,
@@ -742,8 +991,8 @@ public sealed class WebSettingsService : IDisposable
             using var doc = JsonDocument.Parse(body);
             var id = GetJsonString(doc.RootElement, "id");
             var alias = GetJsonString(doc.RootElement, "alias");
-            var removed = _learnedMappings?.Forget(
-                string.IsNullOrWhiteSpace(id) ? alias : id) ?? false;
+            var reference = string.IsNullOrWhiteSpace(id) ? alias : id;
+            var removed = DeleteSavedMapping(_settings, _learnedMappings, reference);
             await WriteJson(resp, new { ok = removed, removed });
         }
         catch (Exception ex)
@@ -785,7 +1034,8 @@ public sealed class WebSettingsService : IDisposable
         try
         {
             var format = new WaveFormat(16000, 1);
-            var deviceIndex = KeyboardWtfState.SelectedMicrophoneIndex;
+            var deviceIndex = AudioRecorderService.ResolveDeviceNumber(
+                KeyboardWtfState.SelectedMicrophoneIndex);
             var waveIn = new WaveInEvent
             {
                 DeviceNumber = deviceIndex,
@@ -805,12 +1055,7 @@ public sealed class WebSettingsService : IDisposable
             pcm.Dispose();
 
             // Calculate peak amplitude from raw PCM (16-bit samples)
-            var peak = 0;
-            for (var i = 0; i < pcmData.Length - 1; i += 2)
-            {
-                var sample = Math.Abs((short)(pcmData[i] | (pcmData[i + 1] << 8)));
-                if (sample > peak) peak = sample;
-            }
+            var peak = AudioRecorderService.Pcm16Peak(pcmData);
 
             var peakDb = peak > 0 ? 20.0 * Math.Log10(peak / 32768.0) : -96.0;
             var byteCount = pcmData.Length;
@@ -895,7 +1140,7 @@ public sealed class WebSettingsService : IDisposable
                 var sample = effective == "de"
                     ? "Hallo, dies ist ein Test von keyboard.wtf."
                     : "Hello, this is a keyboard.wtf voice test.";
-                TtsService.Instance.Speak(sample, langOverride);
+                TtsService.Instance.Speak(sample, langOverride, _app?.UpdateWorkAdmission);
                 resultJson = JsonSerializer.Serialize(new
                 {
                     ok = true,
@@ -921,7 +1166,12 @@ public sealed class WebSettingsService : IDisposable
         string resultJson;
         try
         {
-            await ModelManager.EnsureModelsAsync(status => AppLog.Info($"Model download: {status}"));
+            KeyboardWtfState.IsDownloadingModels = true;
+            await ModelManager.EnsureModelsAsync(status =>
+            {
+                KeyboardWtfState.ModelDownloadStatus = status;
+                AppLog.Info($"Model download: {status}");
+            });
 
             // Reload models into the speech service
             if (ModelManager.IsVoskPresent && !(_app?.SpeechRecognition?.IsVoskLoaded ?? false))
@@ -942,6 +1192,11 @@ public sealed class WebSettingsService : IDisposable
         catch (Exception ex)
         {
             resultJson = JsonSerializer.Serialize(new { ok = false, error = ex.Message });
+        }
+        finally
+        {
+            KeyboardWtfState.IsDownloadingModels = false;
+            KeyboardWtfState.ModelDownloadStatus = null;
         }
 
         var buffer = Encoding.UTF8.GetBytes(resultJson);
@@ -1043,7 +1298,8 @@ public sealed class WebSettingsService : IDisposable
         {
             StopLiveMicInternal(); // idempotent: stop any existing session first
 
-            var deviceIndex = KeyboardWtfState.SelectedMicrophoneIndex >= 0 ? KeyboardWtfState.SelectedMicrophoneIndex : 0;
+            var deviceIndex = AudioRecorderService.ResolveDeviceNumber(
+                KeyboardWtfState.SelectedMicrophoneIndex);
             lock (_liveMicLock)
             {
                 _liveMicPeak = 0;
@@ -1063,7 +1319,7 @@ public sealed class WebSettingsService : IDisposable
         {
             StopLiveMicInternal();
             resultJson = JsonSerializer.Serialize(new { ok = false, error = ex.Message });
-            AppLog.Error($"Mic test start failed: {ex.Message}");
+            AppLog.Error(ex, "Mic test start failed");
         }
 
         await WriteJson(resp, resultJson);
@@ -1071,12 +1327,7 @@ public sealed class WebSettingsService : IDisposable
 
     private void OnLiveMicData(object sender, WaveInEventArgs e)
     {
-        var peak = 0;
-        for (var i = 0; i < e.BytesRecorded - 1; i += 2)
-        {
-            var sample = Math.Abs((short)(e.Buffer[i] | (e.Buffer[i + 1] << 8)));
-            if (sample > peak) peak = sample;
-        }
+        var peak = AudioRecorderService.Pcm16Peak(e.Buffer.AsSpan(0, e.BytesRecorded));
         // Keep the highest peak observed since last poll (simple VU-meter behavior)
         if (peak > _liveMicPeak)
             _liveMicPeak = peak;
@@ -1167,7 +1418,7 @@ public sealed class WebSettingsService : IDisposable
             }
             catch (Exception ex)
             {
-                AppLog.Error($"Mic test stop: {ex.Message}");
+                AppLog.Error(ex, "Mic test stop");
             }
             finally
             {
@@ -1175,6 +1426,475 @@ public sealed class WebSettingsService : IDisposable
                 _liveMicPeak = 0;
             }
         }
+    }
+
+    private object BrowserAutomationSettingsSnapshot()
+    {
+        var helper = _browserAutomation?.HelperStatus ?? new BrowserHelperStatus();
+        var task = _browserAutomation?.Snapshot() ?? new BrowserAutomationSnapshot();
+        var executable = Environment.ProcessPath ?? _app?.StartupExecutablePath ?? "";
+        var nativeHost = _browserNativeHostInstaller.Inspect(executable);
+        return new
+        {
+            enabled = _settings?.Current.BrowserAutomationEnabled ?? false,
+            model = _settings?.Current.BrowserAutomationModel ?? "gemini-3.1-flash-lite-preview",
+            memoryEnabled = _settings?.Current.BrowserAutomationMemoryEnabled ?? false,
+            memoryAvailable = false,
+            consentAccepted = _settings?.HasBrowserAutomationConsent ?? false,
+            consentVersion = _settings?.Current.BrowserAutomationConsentVersion ?? 0,
+            requiredConsentVersion = SettingsService.CurrentBrowserAutomationConsentVersion,
+            helperConnected = helper.Connected,
+            currentTabAutomationAvailable = helper.CommandChannelReady,
+            multipleHelpersDetected = helper.MultipleHelpersDetected,
+            nativeHostRegistered = nativeHost.Ready,
+            nativeHostIssue = nativeHost.Issue,
+            nativeHostExecutableName = string.IsNullOrWhiteSpace(nativeHost.ExecutablePath)
+                ? ""
+                : Path.GetFileName(nativeHost.ExecutablePath),
+            expectedVersion = BrowserHelperProtocol.Version,
+            serviceWorkerVersion = helper.ServiceWorkerVersion,
+            contentScriptVersion = helper.ContentScriptVersion,
+            extensionId = helper.ExtensionId,
+            storeExtensionId = BrowserHelperProtocol.StoreExtensionId,
+            developmentExtensionId = BrowserHelperProtocol.DevelopmentExtensionId,
+            storeUrl =
+                $"https://chromewebstore.google.com/detail/{BrowserHelperProtocol.StoreExtensionId}",
+            storeHelperConnected = string.Equals(
+                helper.ExtensionId,
+                BrowserHelperProtocol.StoreExtensionId,
+                StringComparison.OrdinalIgnoreCase),
+            developmentHelperConnected = string.Equals(
+                helper.ExtensionId,
+                BrowserHelperProtocol.DevelopmentExtensionId,
+                StringComparison.OrdinalIgnoreCase),
+            bridgeReachable = helper.Connected,
+            activeTabFresh = helper.ActiveTabFresh,
+            activeTabUrl = helper.ActiveUrl,
+            activeTabTitle = helper.ActiveTitle,
+            activeWindowId = helper.WindowId,
+            activeTabId = helper.TabId,
+            graphVersion = helper.GraphVersion,
+            controlCount = helper.ControlCount,
+            lastHeartbeatUtc = helper.LastHeartbeatUtc,
+            lastError = helper.LastError,
+            extensionFolder = _browserNativeHostInstaller.ResolveExtensionSourceDirectory(),
+            task = new
+            {
+                taskId = task.TaskId,
+                request = task.Request,
+                state = task.State.ToString(),
+                currentAction = task.CurrentAction,
+                currentDomain = task.CurrentDomain,
+                currentTabTitle = task.CurrentTabTitle,
+                windowId = task.WindowId,
+                tabId = task.TabId,
+                controlledTabIds = task.ControlledTabIds,
+                startedUtc = task.StartedUtc,
+                updatedUtc = task.UpdatedUtc,
+                canPause = task.CanPause,
+                canResume = task.CanResume,
+                canCancel = task.CanCancel,
+                visionRecovery = task.VisionRecovery,
+                interventionKind = task.InterventionKind,
+                interventionReason = task.InterventionReason,
+                interventionExplanation = task.Intervention?.Explanation ?? "",
+                interventionRequired = task.Intervention?.Required ?? false,
+                interventionCanSkip = task.Intervention?.CanSkip ?? false,
+                lastError = task.LastError,
+                outcome = task.Outcome?.ToString(),
+                resultSummary = task.ResultSummary,
+            },
+        };
+    }
+
+    private object PaidAccountSettingsSnapshot()
+    {
+        var account = _paidAccount?.Account;
+        var currentDevice = account?.Devices?.FirstOrDefault(device => device.IsCurrent)
+            ?? account?.Devices?.FirstOrDefault(device =>
+                string.Equals(device.Status, "active", StringComparison.OrdinalIgnoreCase));
+        return new
+        {
+            enabled = _paidAccount?.Enabled ?? false,
+            signedIn = _paidAccount?.IsSignedIn ?? false,
+            accountLoading = _paidAccount?.IsAccountLoading ?? false,
+            email = account?.Email ?? "",
+            displayName = account?.DisplayName ?? "",
+            status = account?.Status ?? "signed_out",
+            planId = account?.PlanId ?? "none",
+            planDisplayName = account?.PlanDisplayName ?? "No active plan",
+            planAmountMinor = account?.PlanAmountMinor ?? 0,
+            planCurrency = account?.PlanCurrency ?? "INR",
+            subscriptionStatus = account?.SubscriptionStatus ?? "none",
+            subscriptionCancellationStatus = account?.SubscriptionCancellationStatus ?? "none",
+            subscriptionCancelsAt = account?.SubscriptionCancelsAt,
+            availableCreditMicros = account?.AvailableCreditMicros ?? 0,
+            reservedCreditMicros = account?.ReservedCreditMicros ?? 0,
+            cycleUsageCreditMicros = account?.CycleUsageCreditMicros ?? 0,
+            subscriptionAllowanceCreditMicros = account?.SubscriptionAllowanceCreditMicros ?? 0,
+            subscriptionOriginalCreditMicros = account?.SubscriptionOriginalCreditMicros ?? 0,
+            subscriptionReservedCreditMicros = account?.SubscriptionReservedCreditMicros ?? 0,
+            subscriptionConsumedCreditMicros = account?.SubscriptionConsumedCreditMicros ?? 0,
+            topUpCreditMicros = account?.TopUpCreditMicros ?? 0,
+            cycleEndsAt = account?.CycleEndsAt,
+            deviceId = currentDevice?.DeviceId ?? "",
+            deviceName = currentDevice?.Name ?? "",
+            devicePlatform = currentDevice?.Platform ?? "Windows",
+            devices = account?.Devices?.Select(device => new
+            {
+                deviceId = device.DeviceId,
+                name = device.Name,
+                status = device.Status,
+                lastSeenAt = device.LastSeenAt,
+                createdAt = device.CreatedAt,
+                platform = device.Platform,
+                isCurrent = device.IsCurrent,
+            }).ToArray() ?? [],
+            recentUsage = account?.RecentUsage?.Select(usage => new
+            {
+                requestId = usage.RequestId,
+                model = usage.Model,
+                outcome = usage.Outcome,
+                chargedCreditMicros = usage.ChargedCreditMicros,
+                inputTokens = usage.InputTokens,
+                outputTokens = usage.OutputTokens,
+                createdAt = usage.CreatedAt,
+                activityType = usage.ActivityType,
+                pricingVersion = usage.PricingVersion,
+                cachedInputTokens = usage.CachedInputTokens,
+                reasoningTokens = usage.ReasoningTokens,
+                inputAudioTokens = usage.InputAudioTokens,
+                outputAudioTokens = usage.OutputAudioTokens,
+                inputImageTokens = usage.InputImageTokens,
+                outputImageTokens = usage.OutputImageTokens,
+                usageEstimated = usage.UsageEstimated,
+                providerModelVersion = usage.ProviderModelVersion,
+                accountingStatus = usage.AccountingStatus,
+            }).ToArray() ?? [],
+            recentPurchases = account?.RecentPurchases?.Select(purchase => new
+            {
+                purchaseId = purchase.PurchaseId,
+                productSku = purchase.ProductSku,
+                provider = purchase.Provider,
+                status = purchase.Status,
+                amountMinor = purchase.AmountMinor,
+                currency = purchase.Currency,
+                createdAt = purchase.CreatedAt,
+                fulfilled = purchase.Fulfilled,
+                displayName = purchase.DisplayName,
+            }).ToArray() ?? [],
+            lastError = _paidAccount?.LastError ?? "",
+            emergencyByokEnabled = _paidAccount?.EmergencyByokEnabled ?? false,
+            signInState = _paidAccount?.SignInState ?? "idle",
+            signInPending = _paidAccount?.SignInPending ?? false,
+            signInExpiresAt = _paidAccount?.SignInExpiresAt,
+        };
+    }
+
+    private async Task HandlePaidAccountAction(
+        HttpListenerRequest request,
+        string path,
+        HttpListenerResponse response)
+    {
+        try
+        {
+            if (_paidAccount?.Enabled != true)
+                throw new InvalidOperationException("Paid account is not enabled for this build.");
+            switch (path)
+            {
+                case "/api/paid/sign-in":
+                    await _paidAccount.SignInAsync(_cts?.Token ?? CancellationToken.None);
+                    break;
+                case "/api/paid/retry-sign-in":
+                    await _paidAccount.RetrySignInAsync(_cts?.Token ?? CancellationToken.None);
+                    break;
+                case "/api/paid/switch-account":
+                    await _paidAccount.SwitchAccountAsync(_cts?.Token ?? CancellationToken.None);
+                    break;
+                case "/api/paid/cancel-sign-in":
+                    await _paidAccount.CancelSignInAsync();
+                    break;
+                case "/api/paid/refresh":
+                    await _paidAccount.RefreshAccountAsync(_cts?.Token ?? CancellationToken.None);
+                    break;
+                case "/api/paid/sign-out":
+                    await _paidAccount.SignOutAsync(false, _cts?.Token ?? CancellationToken.None);
+                    break;
+                case "/api/paid/sign-out-all":
+                    await _paidAccount.SignOutAsync(true, _cts?.Token ?? CancellationToken.None);
+                    break;
+                case "/api/paid/revoke-device":
+                    using (var document = await JsonDocument.ParseAsync(
+                               request.InputStream,
+                               cancellationToken: _cts?.Token ?? CancellationToken.None))
+                    {
+                        var deviceId = GetJsonString(document.RootElement, "deviceId");
+                        await _paidAccount.RevokeDeviceAsync(
+                            deviceId,
+                            _cts?.Token ?? CancellationToken.None);
+                    }
+                    break;
+                case "/api/paid/cancel-subscription":
+                    await _paidAccount.CancelSubscriptionAtCycleEndAsync(
+                        _cts?.Token ?? CancellationToken.None);
+                    break;
+                case "/api/paid/manage":
+                    _paidAccount.OpenManageAccount();
+                    break;
+                case "/api/paid/billing":
+                    _paidAccount.OpenBilling();
+                    break;
+                default:
+                    response.StatusCode = 404;
+                    await WriteJson(response, new { ok = false, error = "Unknown paid account action." });
+                    return;
+            }
+            await WriteJson(response, new { ok = true, account = PaidAccountSettingsSnapshot() });
+        }
+        catch (OperationCanceledException)
+        {
+            response.StatusCode = 408;
+            await WriteJson(response, new { ok = false, error = "The account action was cancelled." });
+        }
+        catch (Exception exception)
+        {
+            AppLog.Warning(exception, "Paid account settings action failed");
+            response.StatusCode = 400;
+            await WriteJson(response, new { ok = false, error = exception.Message });
+        }
+    }
+
+    private async Task SendJarvisTextTurn(
+        HttpListenerRequest req,
+        HttpListenerResponse resp)
+    {
+        try
+        {
+            using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
+            using var document = JsonDocument.Parse(await reader.ReadToEndAsync());
+            var text = GetJsonString(document.RootElement, "text");
+            await (_app?.SendJarvisTextTurnAsync(text)
+                ?? Task.FromException(new InvalidOperationException("Jarvis is unavailable.")));
+            await WriteJson(resp, new
+            {
+                ok = true,
+                accepted = true,
+                message = "The text command was sent through the normal Jarvis Gemini Live route.",
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning(ex, "Jarvis text turn failed");
+            resp.StatusCode = 400;
+            await WriteJson(resp, new
+            {
+                ok = false,
+                error = ex.Message,
+            });
+        }
+    }
+
+    private async Task ServeBrowserAutomationStatus(HttpListenerResponse resp) =>
+        await WriteJson(resp, BrowserAutomationSettingsSnapshot());
+
+    private async Task SaveBrowserAutomationConsent(
+        HttpListenerRequest req,
+        HttpListenerResponse resp)
+    {
+        using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
+        using var document = JsonDocument.Parse(await reader.ReadToEndAsync());
+        var accepted = document.RootElement.TryGetProperty("accepted", out var acceptedElement)
+            && acceptedElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+            && acceptedElement.GetBoolean();
+        _settings?.SaveBrowserAutomationConsent(accepted);
+        if (accepted)
+            _settings?.SaveBrowserAutomationEnabled(true);
+        else if (_browserAutomation?.Snapshot().CanCancel == true)
+            await _browserAutomation.CancelAsync("Browser Automation consent was withdrawn.");
+
+        await WriteJson(resp, new
+        {
+            ok = true,
+            accepted = _settings?.HasBrowserAutomationConsent ?? false,
+            enabled = _settings?.Current.BrowserAutomationEnabled ?? false,
+        });
+    }
+
+    private static async Task ServeEmbeddedHtml(HttpListenerResponse resp, string resourceName)
+    {
+        var assembly = typeof(WebSettingsService).Assembly;
+        await using var stream = assembly.GetManifestResourceStream(resourceName)
+            ?? throw new FileNotFoundException($"Embedded web resource not found: {resourceName}");
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        var html = await reader.ReadToEndAsync();
+        var buffer = Encoding.UTF8.GetBytes(html);
+        resp.ContentType = "text/html; charset=utf-8";
+        resp.ContentLength64 = buffer.Length;
+        await resp.OutputStream.WriteAsync(buffer);
+        resp.Close();
+    }
+
+    private async Task ConnectBrowserHelper(HttpListenerResponse resp)
+    {
+        try
+        {
+            var executable = Environment.ProcessPath ?? _app?.StartupExecutablePath;
+            if (string.IsNullOrWhiteSpace(executable))
+                throw new InvalidOperationException("The keyboard.wtf executable path is unavailable.");
+            _browserNativeHostInstaller.Register(executable);
+            var extensionFolder = _browserNativeHostInstaller.InstallExtension();
+            if (Directory.Exists(extensionFolder))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = extensionFolder,
+                    UseShellExecute = true,
+                });
+            }
+
+            await WriteJson(resp, new
+            {
+                ok = true,
+                extensionFolder,
+                extensionId = BrowserHelperProtocol.DevelopmentExtensionId,
+                expectedVersion = BrowserHelperProtocol.Version,
+                message = "The unpacked fallback folder is ready. Load or reload it once in Chrome, then return here and use Check connection status.",
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning(ex, "Chrome Helper registration failed");
+            await WriteJson(resp, new
+            {
+                ok = false,
+                error = ex.Message,
+            });
+        }
+    }
+
+    private async Task ReconnectBrowserHelper(HttpListenerResponse resp)
+    {
+        try
+        {
+            var executable = Environment.ProcessPath ?? _app?.StartupExecutablePath;
+            if (string.IsNullOrWhiteSpace(executable))
+                throw new InvalidOperationException("The keyboard.wtf executable path is unavailable.");
+
+            _browserNativeHostInstaller.Register(executable);
+            await WriteJson(resp, new
+            {
+                ok = true,
+                expectedVersion = BrowserHelperProtocol.Version,
+                storeExtensionId = BrowserHelperProtocol.StoreExtensionId,
+                message = "The local Chrome bridge was re-registered. Chrome Helper will reconnect automatically.",
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warning(ex, "Chrome Helper reconnection failed");
+            await WriteJson(resp, new
+            {
+                ok = false,
+                error = ex.Message,
+            });
+        }
+    }
+
+    private async Task TestBrowserHelper(HttpListenerResponse resp)
+    {
+        var helper = _browserAutomation?.HelperStatus ?? new BrowserHelperStatus();
+        await WriteJson(resp, new
+        {
+            ok = helper.CommandChannelReady,
+            connected = helper.Connected,
+            activeTabFresh = helper.ActiveTabFresh,
+            commandChannelReady = helper.CommandChannelReady,
+            activeUrl = helper.ActiveUrl,
+            activeTitle = helper.ActiveTitle,
+            windowId = helper.WindowId,
+            tabId = helper.TabId,
+            graphVersion = helper.GraphVersion,
+            controlCount = helper.ControlCount,
+            serviceWorkerVersion = helper.ServiceWorkerVersion,
+            contentScriptVersion = helper.ContentScriptVersion,
+            extensionId = helper.ExtensionId,
+            storeHelperConnected = string.Equals(
+                helper.ExtensionId,
+                BrowserHelperProtocol.StoreExtensionId,
+                StringComparison.OrdinalIgnoreCase),
+            expectedVersion = BrowserHelperProtocol.Version,
+            error = helper.CommandChannelReady
+                ? ""
+                : (string.IsNullOrWhiteSpace(helper.LastError)
+                    ? "Existing Chrome Helper not connected."
+                    : helper.LastError),
+        });
+    }
+
+    private async Task ControlBrowserAutomation(
+        HttpListenerRequest req,
+        HttpListenerResponse resp)
+    {
+        using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
+        using var document = JsonDocument.Parse(await reader.ReadToEndAsync());
+        var root = document.RootElement;
+        var action = GetJsonString(root, "action").Trim().ToLowerInvariant();
+        var guidance = GetJsonString(root, "guidance");
+        var ok = action switch
+        {
+            "pause" => _browserAutomation?.Pause() == true,
+            "resume" => _browserAutomation?.Resume() == true,
+            "cancel" => _browserAutomation != null
+                && await _browserAutomation.CancelAsync(),
+            "guide" when !string.IsNullOrWhiteSpace(guidance) => AddBrowserGuidance(guidance),
+            _ => false,
+        };
+        await WriteJson(resp, new
+        {
+            ok,
+            task = _browserAutomation?.Snapshot(),
+        });
+    }
+
+    private bool AddBrowserGuidance(string guidance)
+    {
+        return _browserAutomation?.TryAddTaskGuidance(guidance, out _) == true;
+    }
+
+    private static async Task LaunchUninstaller(
+        HttpListenerRequest req,
+        HttpListenerResponse resp)
+    {
+        var removeUserData = false;
+        try
+        {
+            using var reader = new StreamReader(req.InputStream, req.ContentEncoding);
+            var body = await reader.ReadToEndAsync();
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                using var document = JsonDocument.Parse(body);
+                removeUserData = document.RootElement.TryGetProperty(
+                        "removeUserData",
+                        out var removeElement)
+                    && removeElement.ValueKind == JsonValueKind.True;
+            }
+        }
+        catch (JsonException)
+        {
+            resp.StatusCode = 400;
+            await WriteJson(resp, new { ok = false, error = "Invalid uninstall request." });
+            return;
+        }
+
+        var launched = WindowsAppLifecycleService.LaunchRegisteredUninstaller(
+            removeUserData,
+            out var error);
+        await WriteJson(resp, new
+        {
+            ok = launched,
+            removeUserData,
+            error = launched ? "" : error,
+        });
     }
 
     private static async Task WriteJson(HttpListenerResponse resp, string json)
@@ -1186,11 +1906,178 @@ public sealed class WebSettingsService : IDisposable
         resp.Close();
     }
 
-    private static bool HasSettingsActionHeader(HttpListenerRequest request) =>
-        string.Equals(
+    private bool HasSettingsActionHeader(HttpListenerRequest request) =>
+        HasValidSettingsActionToken(
             request.Headers["X-Keyboard-Wtf-Settings-Action"],
-            "explicit-user-action",
-            StringComparison.Ordinal);
+            _settingsActionToken);
+
+    internal static bool HasValidSettingsActionToken(string supplied, string expected)
+    {
+        var suppliedBytes = Encoding.UTF8.GetBytes(supplied ?? "");
+        var expectedBytes = Encoding.UTF8.GetBytes(expected ?? "");
+        return suppliedBytes.Length == expectedBytes.Length
+            && CryptographicOperations.FixedTimeEquals(suppliedBytes, expectedBytes);
+    }
+
+    private static string CreateSettingsActionToken() =>
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+
+    private bool IsExpectedLoopbackRequest(HttpListenerRequest request)
+    {
+        if (!request.IsLocal || request.Url is null || request.Url.Port != Port)
+            return false;
+        if (!string.Equals(request.Url.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(request.Url.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return IPAddress.TryParse(request.Url.Host, out var address)
+            && IPAddress.IsLoopback(address);
+    }
+
+    private static bool IsStateChangingMethod(string method) =>
+        string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(method, "PATCH", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<bool> ValidateStateChangingRequestAsync(
+        HttpListenerRequest request,
+        HttpListenerResponse response)
+    {
+        if (!HasSettingsActionHeader(request))
+        {
+            response.StatusCode = 403;
+            await WriteJson(response, new
+            {
+                ok = false,
+                code = "settings_session_expired",
+                error = "This settings action is not authorized for the current app session.",
+            });
+            return false;
+        }
+
+        if (!IsSameSettingsOrigin(request.Headers["Origin"], Port)
+            || !IsSameSettingsReferer(request.Headers["Referer"], Port)
+            || !IsSameOriginFetch(request.Headers["Sec-Fetch-Site"]))
+        {
+            response.StatusCode = 403;
+            await WriteJson(response, new
+            {
+                ok = false,
+                error = "This settings action came from an untrusted origin.",
+            });
+            return false;
+        }
+
+        const long maxRequestBytes = 2 * 1024 * 1024;
+        if (request.HasEntityBody
+            && (request.ContentLength64 < 0 || request.ContentLength64 > maxRequestBytes))
+        {
+            response.StatusCode = 413;
+            await WriteJson(response, new { ok = false, error = "The settings request is too large." });
+            return false;
+        }
+
+        if (request.HasEntityBody && !IsJsonContentType(request.ContentType))
+        {
+            response.StatusCode = 415;
+            await WriteJson(response, new { ok = false, error = "Settings actions require JSON." });
+            return false;
+        }
+
+        return true;
+    }
+
+    internal static bool IsSameSettingsOrigin(string value, int port)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+        return Uri.TryCreate(value, UriKind.Absolute, out var origin)
+            && string.Equals(origin.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            && origin.Port == port
+            && (string.Equals(origin.Host, "localhost", StringComparison.OrdinalIgnoreCase)
+                || (IPAddress.TryParse(origin.Host, out var address) && IPAddress.IsLoopback(address)));
+    }
+
+    internal static bool IsSameSettingsReferer(string value, int port)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+        return Uri.TryCreate(value, UriKind.Absolute, out var referer)
+            && IsSameSettingsOrigin(referer.GetLeftPart(UriPartial.Authority), port);
+    }
+
+    internal static bool IsSameOriginFetch(string value) =>
+        string.IsNullOrWhiteSpace(value)
+        || string.Equals(value, "same-origin", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(value, "none", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsJsonContentType(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+        var separator = value.IndexOf(';');
+        var mediaType = separator >= 0 ? value[..separator] : value;
+        return string.Equals(mediaType.Trim(), "application/json", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string InjectSettingsRequestGuard(string html)
+    {
+        var script = $@"<script>
+{BuildSettingsRequestGuardScript(_settingsActionToken)}
+</script>";
+        var marker = "</head>";
+        var index = html.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        return index >= 0 ? html.Insert(index, script) : script + html;
+    }
+
+    internal static string BuildSettingsRequestGuardScript(string actionToken)
+    {
+        var tokenJson = JsonSerializer.Serialize(actionToken ?? "");
+        return $@"
+(() => {{
+  const actionToken = {tokenJson};
+  const recoveryKey = 'keyboard-wtf-settings-session-reloaded';
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {{}}) => {{
+    const target = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+    const method = String(init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+    const isStateChanging = target.origin === window.location.origin && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const isSettingsSessionRequest = isStateChanging || (target.origin === window.location.origin && (target.pathname.startsWith('/api/saved-state') || target.pathname === '/api/luma/context'));
+    if (isSettingsSessionRequest) {{
+      const headers = new Headers(init.headers || (typeof input === 'object' ? input.headers : undefined));
+      headers.set('X-Keyboard-Wtf-Settings-Action', actionToken);
+      init = {{ ...init, headers }};
+    }}
+    return originalFetch(input, init).then(async response => {{
+      if (isSettingsSessionRequest && response.status === 403) {{
+        try {{
+          const body = await response.clone().json();
+          if (body && body.code === 'settings_session_expired'
+              && sessionStorage.getItem(recoveryKey) !== actionToken) {{
+            sessionStorage.setItem(recoveryKey, actionToken);
+            window.location.reload();
+          }}
+        }} catch {{}}
+      }}
+      if (target.origin === window.location.origin && target.pathname === '/api/settings' && method === 'POST') {{
+        let body;
+        try {{ body = await response.clone().json(); }} catch {{}}
+        // Preserve the existing callers' semantic 400/409 handling (hotkey
+        // conflicts). Storage/session failures and false success must reject.
+        if (response.status >= 500 || (body && ['settings_storage_failed', 'settings_session_expired'].includes(body.code))
+            || (response.ok && (!body || body.ok !== true)))
+          throw new Error('Settings were not saved. Please try again.');
+      }}
+      return response;
+    }});
+  }};
+}})();
+";
+    }
 
     private async Task PreviewFilenameEndpoint(HttpListenerRequest req, HttpListenerResponse resp)
     {
@@ -1271,7 +2158,7 @@ public sealed class WebSettingsService : IDisposable
             var stdout = (await stdoutTask).Trim();
             var stderr = (await stderrTask).Trim();
 
-            AppLog.Info($"FolderPicker exit={proc.ExitCode} stdout='{stdout}' stderr='{stderr}'");
+            AppLog.Info($"FolderPicker exit={proc.ExitCode} stdoutCharacters={stdout.Length} stderrCharacters={stderr.Length}");
 
             if (!string.IsNullOrWhiteSpace(stdout) && Directory.Exists(stdout))
             {
@@ -1289,7 +2176,7 @@ public sealed class WebSettingsService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error($"PickVoiceNotesFolder failed: {ex.Message}");
+            AppLog.Error(ex, "PickVoiceNotesFolder failed");
             resultJson = JsonSerializer.Serialize(new { ok = false, error = ex.Message });
         }
 
@@ -1340,9 +2227,152 @@ public sealed class WebSettingsService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Failed to load settings.html: {ex.Message}");
+            AppLog.Error(ex, "Failed to load settings.html");
             return null;
         }
+    }
+
+    private async Task CheckForUpdate(HttpListenerResponse response)
+    {
+        try
+        {
+            var update = await _secureUpdates.CheckAsync(
+                _settings?.Current.UpdateChannel ?? "stable",
+                _cts?.Token ?? CancellationToken.None);
+            var consentToken = _updateConsent.Issue(update);
+            await WriteJson(response, update == null
+                ? new { ok = true, available = false, message = "keyboard.wtf is up to date." }
+                : new
+                {
+                    ok = true,
+                    available = true,
+                    version = update.Version.ToString(),
+                    channel = update.Channel,
+                    publishedAt = update.PublishedAt,
+                    releaseNotes = update.ReleaseNotes,
+                    signingKeyId = update.KeyId,
+                    installationReady = SafeUpdateInstallationReady,
+                    consentToken,
+                });
+        }
+        catch (Exception exception)
+        {
+            _updateConsent.Clear();
+            AppLog.Warning(exception, "Secure update check failed");
+            response.StatusCode = 503;
+            await WriteJson(response, new
+            {
+                ok = false,
+                available = false,
+                error = "The signed update feed could not be verified. No update was installed.",
+            });
+        }
+    }
+
+    // Source-only release gate: do not reopen until actual work-owner coverage,
+    // graceful idle exit, installer lock handling and relaunch are verified.
+    // There is deliberately no user/environment override for this unfinished path.
+    internal static bool SafeUpdateInstallationReady => false;
+
+    private async Task DownloadAndInstallUpdate(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        if (!SafeUpdateInstallationReady)
+        {
+            response.StatusCode = 409;
+            await WriteJson(response, new
+            {
+                ok = false,
+                started = false,
+                code = "update_install_not_ready",
+                error = "In-app installation is temporarily unavailable. Your current installation has not changed.",
+            });
+            return;
+        }
+        if (!await _updateLock.WaitAsync(0))
+        {
+            response.StatusCode = 409;
+            await WriteJson(response, new { ok = false, error = "An update is already being prepared." });
+            return;
+        }
+        var launched = false;
+        try
+        {
+            VerifiedUpdate update;
+            try
+            {
+                update = _updateConsent.Take(request.Headers["X-Keyboard-Wtf-Update-Consent"],
+                    _settings?.Current.UpdateChannel ?? "stable");
+            }
+            catch (InvalidOperationException)
+            {
+                response.StatusCode = 409;
+                await WriteJson(response, new { ok = false, error = "Check for updates again and approve the exact verified version before installing." });
+                return;
+            }
+            var installer = await _secureUpdates.DownloadAsync(
+                update,
+                _cts?.Token ?? CancellationToken.None);
+            // Never substitute a new channel/artifact while a download awaits.
+            if (!string.Equals(update.Channel, SecureUpdateService.NormalizeChannel(
+                    _settings?.Current.UpdateChannel ?? "stable"), StringComparison.Ordinal))
+            {
+                response.StatusCode = 409;
+                await WriteJson(response, new { ok = false, error = "The update channel changed. Check again before installing; no installer was started." });
+                return;
+            }
+            await CompleteUpdateLaunchAsync(
+                () =>
+                {
+                    using var process = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = installer,
+                        Arguments = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS",
+                        UseShellExecute = true,
+                        WorkingDirectory = Path.GetDirectoryName(installer) ?? SettingsService.AppDataDir,
+                    });
+                    return launched = process != null;
+                },
+                () => WriteJson(response, new
+                {
+                    ok = true,
+                    started = true,
+                    version = update.Version.ToString(),
+                    message = "The verified installer has started.",
+                }),
+                () => _app?.RequestExitForUpdate());
+        }
+        catch (Exception exception)
+        {
+            if (launched)
+            {
+                // Process.Start committed; a disconnected Settings client cannot
+                // turn that into a false 'installation unchanged' response.
+                AppLog.Warning(exception, "Verified installer started; update acknowledgement or exit scheduling failed");
+                return;
+            }
+            AppLog.Warning(exception, "Secure update installation failed");
+            response.StatusCode = 503;
+            await WriteJson(response, new
+            {
+                ok = false,
+                error = "The update could not be verified or started. Your current installation was not changed.",
+            });
+        }
+        finally
+        {
+            _updateLock.Release();
+        }
+    }
+
+    internal static async Task CompleteUpdateLaunchAsync(
+        Func<bool> launch, Func<Task> acknowledge, Action requestExit)
+    {
+        if (!launch())
+            throw new InvalidOperationException("Windows did not start the verified installer.");
+        // Exit is already scheduled (with the app's existing reply grace period)
+        // before awaiting the client, even if HTTP acknowledgement stalls/fails.
+        requestExit();
+        await acknowledge();
     }
 
     private int FindAvailablePort(int startPort)
@@ -1370,8 +2400,11 @@ public sealed class WebSettingsService : IDisposable
         if (_disposed) return;
         _disposed = true;
 
+        DisposeLumaService();
         StopLiveMicInternal();
+        _updateConsent.Clear();
         _cts?.Cancel();
+        _savedStateNotifications?.Dispose();
         _listener?.Stop();
         _listener?.Close();
 
@@ -1379,6 +2412,8 @@ public sealed class WebSettingsService : IDisposable
         catch { }
 
         _cts?.Dispose();
+        _secureUpdates.Dispose();
+        _updateLock.Dispose();
         IsRunning = false;
 
         AppLog.Info("WebSettingsService stopped");

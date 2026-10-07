@@ -4,14 +4,42 @@ using System.Drawing;
 using System.Windows.Forms;
 using KeyboardWtf.Destinations;
 using KeyboardWtf.Services;
+using KeyboardWtf.Services.BrowserAutomationV2;
+using KeyboardWtf.Services.Updates;
 
 internal static class Program
 {
     private static FileStream _instanceLock;
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+#if KEYBOARD_WTF_PAID_PRODUCTION && !KEYBOARD_WTF_PAID_PRODUCTION_CANDIDATE
+        UpdateProcessEntry.RunForCurrentBuild(() => RunOriginal(args), message => ReportStartupRefusal(args, message));
+#else
+        RunOriginal(args);
+#endif
+    }
+
+    private static void ReportStartupRefusal(string[] args, string message)
+    {
+        Environment.ExitCode = 1;
+        // Refused native hosts must not connect/auto-start the GUI, write stdout
+        // outside the framed protocol, or open a user-blocking message dialog.
+        if (!BrowserNativeMessagingHost.IsNativeHostInvocation(args))
+            MessageBox.Show(message, "keyboard.wtf", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private static void RunOriginal(string[] args)
+    {
+        if (BrowserNativeMessagingHost.IsNativeHostInvocation(args))
+        {
+            Environment.ExitCode = BrowserNativeMessagingHost.Run();
+            return;
+        }
+
+        WindowsAppLifecycleService.WaitForRestartParent(args);
+
         if (!TryAcquireInstanceLock())
             return;
 

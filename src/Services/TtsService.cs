@@ -7,7 +7,9 @@ using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
+using KeyboardWtf.Helpers;
 using KeyboardWtf.Models;
+using KeyboardWtf.Services.Updates;
 
 /// <summary>
 /// Unified text-to-speech facade with two backends:
@@ -45,8 +47,10 @@ internal sealed class TtsService
 
     // ---------- Piper state ----------
     private readonly object _piperLock = new();
+    private readonly TtsPlaybackLease _piperLease = new();
     private CancellationTokenSource _piperCts;
     private WaveOutEvent _piperPlayer;
+    private Process _piperProcess;
 
     public enum TtsBackend { None, Sapi, Piper }
 
@@ -99,17 +103,18 @@ internal sealed class TtsService
         }
     }
 
-    public void Speak(string text, string languageOverride = null)
+    public void Speak(string text, string languageOverride = null, UpdateWorkAdmissionGate updateWorkAdmission = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
+        var spokenText = SpeechPronunciation.ForSynthesis(text);
         var lang = string.IsNullOrEmpty(languageOverride) ? KeyboardWtfState.SelectedLanguage : languageOverride;
         switch (ActiveBackend)
         {
             case TtsBackend.Piper:
-                PiperSpeak(text, lang);
+                PiperSpeak(spokenText, lang, updateWorkAdmission);
                 break;
             case TtsBackend.Sapi:
-                SapiSpeak(text, lang);
+                SapiSpeak(spokenText, lang);
                 break;
             default:
                 AppLog.Warning("TTS: no backend available");
@@ -201,7 +206,7 @@ internal sealed class TtsService
     //                       Piper
     // =====================================================
 
-    private void PiperSpeak(string text, string lang = null)
+    private void PiperSpeak(string text, string lang = null, UpdateWorkAdmissionGate updateWorkAdmission = null)
     {
         var modelPath = ChoosePiperVoice(lang ?? KeyboardWtfState.SelectedLanguage);
         if (modelPath == null)
@@ -211,14 +216,43 @@ internal sealed class TtsService
             return;
         }
 
-        PiperStop(); // cancel any in-flight playback first
-        CancellationTokenSource cts;
-        lock (_piperLock)
+        _ = StartUpdateOwnedPiperWorker(updateWorkAdmission, () =>
         {
-            _piperCts = cts = new CancellationTokenSource();
-        }
+            PiperStop(); // cancel any in-flight playback first
+            CancellationTokenSource cts;
+            long lease;
+            lock (_piperLock)
+            {
+                _piperCts = cts = new CancellationTokenSource();
+                lease = _piperLease.Begin();
+            }
 
-        Task.Run(() => PiperSpeakInternal(text, modelPath, cts.Token, lang));
+            return Task.Run(() => PiperSpeakInternal(text, modelPath, cts.Token, lang, lease));
+        });
+    }
+
+    private static Task StartUpdateOwnedPiperWorker(UpdateWorkAdmissionGate updateWorkAdmission, Func<Task> factory)
+    {
+        if (updateWorkAdmission is null) return factory();
+        if (!updateWorkAdmission.TryAcquire(out var updateWork))
+            throw new InvalidOperationException("An update is preparing installation. Please wait.");
+        Task original;
+        try
+        {
+            original = factory()
+                ?? throw new InvalidOperationException("The Piper worker did not return a completion task.");
+        }
+        catch
+        {
+            updateWork.Dispose();
+            throw;
+        }
+        // The original scheduled lambda may fault before the inner speech body
+        // enters. Stop/replacement and its current-playback lease are not a join.
+        // Attachment failure after scheduling conservatively retains ownership.
+        _ = original.ContinueWith(static (_, state) => ((IDisposable)state).Dispose(),
+            updateWork, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return original;
     }
 
     // Pick the first voice model whose filename prefix matches the selected language (e.g. en_US-... / de_DE-...).
@@ -246,7 +280,12 @@ internal sealed class TtsService
         return models[0];
     }
 
-    private void PiperSpeakInternal(string text, string modelPath, CancellationToken ct, string lang = null)
+    private void PiperSpeakInternal(
+        string text,
+        string modelPath,
+        CancellationToken ct,
+        string lang,
+        long lease)
     {
         string tempWav = Path.Combine(Path.GetTempPath(), $"keyboard-wtf-tts-{Guid.NewGuid():N}.wav");
         try
@@ -264,8 +303,19 @@ internal sealed class TtsService
             if (p == null)
             {
                 AppLog.Warning("TTS(Piper): Process.Start returned null, falling back to SAPI");
-                SapiSpeak(text, lang);
+                if (!ct.IsCancellationRequested)
+                    SapiSpeak(text, lang);
                 return;
+            }
+
+            lock (_piperLock)
+            {
+                if (!_piperLease.IsCurrent(lease))
+                {
+                    TryKill(p);
+                    return;
+                }
+                _piperProcess = p;
             }
 
             p.StandardInput.Write(text);
@@ -274,26 +324,34 @@ internal sealed class TtsService
             {
                 try { p.Kill(entireProcessTree: true); } catch { }
                 AppLog.Warning("TTS(Piper): timeout after 15s, falling back to SAPI");
-                SapiSpeak(text, lang);
+                if (!ct.IsCancellationRequested)
+                    SapiSpeak(text, lang);
                 return;
             }
             if (ct.IsCancellationRequested) return;
             if (p.ExitCode != 0)
             {
-                AppLog.Warning($"TTS(Piper): exit {p.ExitCode}: {p.StandardError.ReadToEnd()}, falling back to SAPI");
-                SapiSpeak(text, lang);
+                AppLog.Warning($"TTS(Piper): exit {p.ExitCode}; stderrCharacters={p.StandardError.ReadToEnd().Length}, falling back to SAPI");
+                if (!ct.IsCancellationRequested)
+                    SapiSpeak(text, lang);
                 return;
             }
             if (!File.Exists(tempWav))
             {
                 AppLog.Warning("TTS(Piper): no output file produced, falling back to SAPI");
-                SapiSpeak(text, lang);
+                if (!ct.IsCancellationRequested)
+                    SapiSpeak(text, lang);
                 return;
             }
 
             using var reader = new WaveFileReader(tempWav);
             using var player = new WaveOutEvent();
-            lock (_piperLock) { _piperPlayer = player; }
+            lock (_piperLock)
+            {
+                if (!_piperLease.IsCurrent(lease) || ct.IsCancellationRequested)
+                    return;
+                _piperPlayer = player;
+            }
 
             var done = new ManualResetEventSlim(false);
             player.PlaybackStopped += (_, _) => done.Set();
@@ -306,14 +364,30 @@ internal sealed class TtsService
             }
             try { player.Stop(); } catch { }
         }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            // Cancellation intentionally terminates synthesis and playback.
+        }
         catch (Exception ex)
         {
             AppLog.Warning(ex, "TTS(Piper): internal error, falling back to SAPI");
-            try { SapiSpeak(text, lang); } catch { }
+            if (!ct.IsCancellationRequested)
+            {
+                try { SapiSpeak(text, lang); } catch { }
+            }
         }
         finally
         {
-            lock (_piperLock) { _piperPlayer = null; }
+            lock (_piperLock)
+            {
+                if (_piperLease.Complete(lease))
+                {
+                    _piperPlayer = null;
+                    _piperProcess = null;
+                    _piperCts?.Dispose();
+                    _piperCts = null;
+                }
+            }
             try { if (File.Exists(tempWav)) File.Delete(tempWav); } catch { }
         }
     }
@@ -322,13 +396,30 @@ internal sealed class TtsService
     {
         CancellationTokenSource cts;
         WaveOutEvent player;
+        Process process;
         lock (_piperLock)
         {
             cts = _piperCts;
             player = _piperPlayer;
+            process = _piperProcess;
+            _piperLease.CancelCurrent();
             _piperCts = null;
+            _piperPlayer = null;
+            _piperProcess = null;
         }
         try { cts?.Cancel(); } catch { }
         try { player?.Stop(); } catch { }
+        TryKill(process);
+        try { cts?.Dispose(); } catch { }
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (process != null && !process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch { }
     }
 }

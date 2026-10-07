@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "version": "1.4.20",
+  "minimumVersion": "1.4.17",
+  "publishedAt": "2026-10-05T17:57:40.9932363+00:00",
+  "packageUrl": "https://github.com/UnknownGod2011/keyboard.wtf/releases/download/v1.4.20/keyboard-wtf-setup.exe",
+  "sha256": "48141d6f55930ffb0eb29643ac2bc5accf4e67031cf8283b327ff70f40393c50",
+  "sizeBytes": 84410622,
+  "releaseNotes": "# keyboard.wtf 1.4.20\n\nThis release brings the accepted Jarvis reliability work into one public Windows\napp, with Personal API and Managed usage sharing the same local action pipeline.\n\n- Natural selected-text translation uses the current foreground selection,\n  retained same-session context, real task progress and verified clipboard\n  completion. Screen analysis is not substituted for selected-text requests.\n- Screen follow-ups can use the same bounded session screenshot context; explicit\n  current-screen requests take a fresh snapshot. Temporary context clears at\n  session end.\n- Saved website/workflow opens can start the Windows default browser when Chrome\n  is closed. Chrome Helper 2.1.28 remains the supported automation integration.\n- Live interruption/no-response feedback is truthful and recoverable. Provider\n  outages and transcription variance can still occur; lost commands are not\n  automatically replayed.\n- PersonalOnly ownership stays isolated from Managed credits. Backend release\n  preparation strengthens checkout ownership, settlement idempotency and\n  subscription-safe account deletion without changing the monthly plan price.\n- Settings has clearer first-run/backend information, active hotkeys and update\n  notifications. This early release uses the normal installer for manual updates;\n  unattended/in-app installation stays disabled pending its remaining safety gates.\n\nThe installer is not Authenticode-signed. Windows may show an unknown-publisher or\nSmartScreen warning. Use only the official keyboardwtf.com download or official\nGitHub Release and verify its published checksum. Chrome Web Store Helper 2.1.28\nis already live; do not install a private/developer Helper for ordinary use.\n\nRelease publication and paid availability depend on final installed/backend\nacceptance; these notes alone do not certify either.\n",
+  "keyId": "kwt-release-2026-01",
+  "signature": "jih9Z0J\u002BzNV3smuhbHHbViYBN2ndTH2\u002BwmyCdNO3eGPGklQsBPv5Z6G/UwLuV0U4b5OEYqH7ZF7cAICkrCyOaQ=="
+}

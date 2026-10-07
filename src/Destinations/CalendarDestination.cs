@@ -27,12 +27,12 @@ public class CalendarDestination : IDestination
             await File.WriteAllTextAsync(tempFile, ics, Encoding.UTF8);
 
             Process.Start(new ProcessStartInfo { FileName = tempFile, UseShellExecute = true });
-            AppLog.Info($"Calendar: opened ICS from '{(text.Length > 60 ? text[..60] : text)}'");
+            AppLog.Info($"Calendar: opened ICS; sourceCharacters={text.Length}");
             return true;
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Calendar: failed: {ex.Message}");
+            AppLog.Error(ex, "Calendar: failed");
             return false;
         }
     }

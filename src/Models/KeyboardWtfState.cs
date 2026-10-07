@@ -14,7 +14,8 @@ public enum RecordingMode
     PushToTalk,
     QuickSend,
     VoiceAssistant,
-    Command
+    Command,
+    JarvisPreflight
 }
 
 public enum VoiceUiPhase
@@ -76,6 +77,10 @@ public class ChatMessage
 // Central runtime state shared by the tray app, hotkeys, capture pipeline, and settings service.
 public static class KeyboardWtfState
 {
+    private static readonly object UiStateLock = new();
+    private static long _uiRevision;
+    private static string _longTaskOperationId = "";
+    private static string _longTaskDetail = "";
     public static SpeechEngine SelectedEngine { get; set; } = SpeechEngine.Whisper;
     public static string SelectedLanguage { get; set; } = "auto";
     public static int SelectedMicrophoneIndex { get; set; } = -1; // -1 = system default
@@ -141,6 +146,7 @@ public static class KeyboardWtfState
     public static string UiTitle { get; private set; } = "keyboard.wtf";
     public static string UiDetail { get; private set; } = "Ready";
     public static DateTime UiPhaseStartedUtc { get; private set; } = DateTime.UtcNow;
+    public static event Action UiChanged;
     public static double InputLevelDb { get; set; } = -96;
     public static bool IsDownloadingModels { get; set; }
     public static string ModelDownloadStatus { get; set; }
@@ -152,12 +158,107 @@ public static class KeyboardWtfState
     public static AssistantTone AssistantTone { get; set; } = AssistantTone.Balanced;
     public static string GeminiVoice { get; set; } = "Kore";
 
-    public static void SetUi(VoiceUiPhase phase, string title, string detail)
+    // Background task feedback is independent of speech/listening state.
+    // A late completion may clear only its own operation's visible detail.
+    internal static string LongTaskDetail { get { lock (UiStateLock) return _longTaskDetail; } }
+
+    // Display grace does not delay or hide ownership from response health.
+    // The overlay's existing refresh timer reads elapsed real task time.
+    private static long _longTaskStartedTimestamp;
+    private static int _longTaskDisplayDelayMilliseconds;
+
+    internal static string LongTaskDisplayDetail(TimeSpan? elapsedOverride = null)
     {
-        UiPhase = phase;
-        UiTitle = title ?? "keyboard.wtf";
-        UiDetail = detail ?? "";
-        UiPhaseStartedUtc = DateTime.UtcNow;
+        lock (UiStateLock)
+        {
+            if (_longTaskDetail.Length == 0) return "";
+            var elapsed = elapsedOverride ?? System.Diagnostics.Stopwatch.GetElapsedTime(_longTaskStartedTimestamp);
+            return elapsed.TotalMilliseconds >= _longTaskDisplayDelayMilliseconds ? _longTaskDetail : "";
+        }
+    }
+
+    internal static void BeginLongTaskUi(string operationId, string detail, int displayDelayMilliseconds = 0)
+    {
+        if (string.IsNullOrWhiteSpace(operationId) || string.IsNullOrWhiteSpace(detail)) return;
+        lock (UiStateLock)
+        {
+            _longTaskOperationId = operationId;
+            _longTaskDetail = detail;
+            _longTaskStartedTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            _longTaskDisplayDelayMilliseconds = Math.Max(0, displayDelayMilliseconds);
+        }
+        try { UiChanged?.Invoke(); }
+        catch { /* Visual feedback cannot affect the owned task. */ }
+    }
+
+    internal static bool TryUpdateLongTaskUi(string operationId, string detail)
+    {
+        lock (UiStateLock)
+        {
+            if (string.IsNullOrWhiteSpace(operationId) || _longTaskOperationId != operationId) return false;
+            _longTaskDetail = detail ?? "";
+            if (_longTaskDetail.Length == 0) _longTaskOperationId = "";
+        }
+        try { UiChanged?.Invoke(); }
+        catch { /* Visual feedback cannot affect the owned task. */ }
+        return true;
+    }
+
+    internal static bool ClearLongTaskUi(string operationId) => TryUpdateLongTaskUi(operationId, null);
+
+    public static long SetUi(VoiceUiPhase phase, string title, string detail)
+    {
+        long revision;
+        lock (UiStateLock)
+        {
+            UiPhase = phase;
+            UiTitle = title ?? "keyboard.wtf";
+            UiDetail = detail ?? "";
+            UiPhaseStartedUtc = DateTime.UtcNow;
+            revision = ++_uiRevision;
+        }
+        try { UiChanged?.Invoke(); }
+        catch { /* UI feedback must never break the active operation. */ }
+        return revision;
+    }
+
+    internal static long UiRevision { get { lock (UiStateLock) return _uiRevision; } }
+
+    internal static long TrySetListeningAdvisory(long expectedRevision, string title, string detail)
+    {
+        long revision;
+        lock (UiStateLock)
+        {
+            if (_uiRevision != expectedRevision || UiPhase != VoiceUiPhase.Listening
+                || _longTaskDetail.Length != 0) return 0;
+            UiTitle = title;
+            UiDetail = detail;
+            revision = ++_uiRevision;
+        }
+        try { UiChanged?.Invoke(); }
+        catch { /* Diagnostic feedback must not affect the conversation. */ }
+        return revision;
+    }
+
+    public static bool TrySetUiIfRevision(
+        long expectedRevision,
+        VoiceUiPhase phase,
+        string title,
+        string detail)
+    {
+        lock (UiStateLock)
+        {
+            if (_uiRevision != expectedRevision)
+                return false;
+            UiPhase = phase;
+            UiTitle = title ?? "keyboard.wtf";
+            UiDetail = detail ?? "";
+            UiPhaseStartedUtc = DateTime.UtcNow;
+            _uiRevision++;
+        }
+        try { UiChanged?.Invoke(); }
+        catch { /* UI feedback must never break the active operation. */ }
+        return true;
     }
 
     // Noise gate: silence frames below -38 dBFS before sending to speech engines

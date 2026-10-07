@@ -44,7 +44,7 @@ public sealed class WhisperRecognitionService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Whisper model load failed: {ex.Message}");
+            AppLog.Error(ex, "Whisper model load failed");
         }
     }
 
@@ -104,7 +104,7 @@ public sealed class WhisperRecognitionService : IDisposable
         }
         catch (Exception ex)
         {
-            AppLog.Error($"Whisper recognition failed: {ex.Message}");
+            AppLog.Error(ex, "Whisper recognition failed");
             return string.Empty;
         }
     }

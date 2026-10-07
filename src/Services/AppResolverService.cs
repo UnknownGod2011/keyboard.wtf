@@ -171,10 +171,25 @@ public sealed class AppResolverService
                 return _cached;
 
             var found = new List<AppCandidate>();
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+            var discoveryStarted = Stopwatch.GetTimestamp();
+#endif
             AddStartApps(found);
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+            var startAppsFinished = Stopwatch.GetTimestamp();
+#endif
             AddStartMenuShortcuts(found);
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+            var startMenuFinished = Stopwatch.GetTimestamp();
+#endif
             AddRegisteredAppPaths(found);
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+            var appPathsFinished = Stopwatch.GetTimestamp();
+#endif
             AddKnownExecutables(found);
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+            var knownExecutablesFinished = Stopwatch.GetTimestamp();
+#endif
 
             _cached = found
                 .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Name)
@@ -183,6 +198,9 @@ public sealed class AppResolverService
                 .Select(group => group.OrderByDescending(candidate => SourcePriority(candidate.Source)).First())
                 .ToArray();
             _cacheTime = DateTimeOffset.UtcNow;
+#if KEYBOARD_WTF_PERSONAL_API_CANDIDATE
+            AppLog.Info($"Jarvis app discovery timing: startAppsMs={Stopwatch.GetElapsedTime(discoveryStarted, startAppsFinished).TotalMilliseconds:F0} startMenuMs={Stopwatch.GetElapsedTime(startAppsFinished, startMenuFinished).TotalMilliseconds:F0} appPathsMs={Stopwatch.GetElapsedTime(startMenuFinished, appPathsFinished).TotalMilliseconds:F0} knownExecutablesMs={Stopwatch.GetElapsedTime(appPathsFinished, knownExecutablesFinished).TotalMilliseconds:F0} totalMs={Stopwatch.GetElapsedTime(discoveryStarted).TotalMilliseconds:F0} candidateCount={_cached.Count}");
+#endif
             return _cached;
         }
     }
@@ -210,6 +228,14 @@ public sealed class AppResolverService
             .OrderByDescending(item => item.Score)
             .FirstOrDefault();
         return typo?.Value ?? clean;
+    }
+
+    internal static bool IsKnownNativeAppName(string query)
+    {
+        var clean = (query ?? "").Trim();
+        if (NaturalAliases.ContainsKey(clean))
+            return true;
+        return KnownExecutables.ContainsKey(CanonicalizeNaturalName(clean));
     }
 
     public bool TryLaunch(AppCandidate candidate, out string error)

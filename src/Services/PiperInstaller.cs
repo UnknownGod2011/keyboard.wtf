@@ -2,7 +2,6 @@ namespace KeyboardWtf.Services;
 
 using System;
 using System.IO;
-using System.IO.Compression;
 using System.Net.Http;
 using System.Threading.Tasks;
 
@@ -19,22 +18,36 @@ using System.Threading.Tasks;
 ///   %LOCALAPPDATA%\keyboard.wtf\tts\voices\en_US-amy-medium.onnx (+ .onnx.json)
 ///   %LOCALAPPDATA%\keyboard.wtf\tts\voices\de_DE-thorsten-medium.onnx (+ .onnx.json)
 /// </summary>
-public static class PiperInstaller
+public static partial class PiperInstaller
 {
     // v1.2.0 dropped the Windows asset (Linux/macOS only). 2023.11.14-2 is the last release
     // that shipped piper_windows_amd64.zip. See https://github.com/rhasspy/piper/releases
     private const string PiperZipUrl =
         "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip";
+    // Independently verified against all 361 accepted local runtime files.
+    // This is our byte pin, not an upstream signature or licensing clearance.
+    private const long PiperArchiveBytes = 22_477_236;
+    private const string PiperArchiveSha256 = "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea";
 
-    // Voice models (Piper's official HuggingFace repo, medium-quality tier)
+    // Same official medium voices; only NEW downloads use immutable origin bytes.
+    private const string VoiceRevision = "c10ece1aade47bb51c153c893d14e5bf8e5b7117";
     private const string EnOnnxUrl =
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx";
+        "https://huggingface.co/rhasspy/piper-voices/resolve/" + VoiceRevision + "/en/en_US/amy/medium/en_US-amy-medium.onnx";
     private const string EnJsonUrl =
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json";
+        "https://huggingface.co/rhasspy/piper-voices/resolve/" + VoiceRevision + "/en/en_US/amy/medium/en_US-amy-medium.onnx.json";
     private const string DeOnnxUrl =
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx";
+        "https://huggingface.co/rhasspy/piper-voices/resolve/" + VoiceRevision + "/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx";
     private const string DeJsonUrl =
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json";
+        "https://huggingface.co/rhasspy/piper-voices/resolve/" + VoiceRevision + "/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json";
+
+    private const long EnOnnxBytes = 63_201_294;
+    private const long DeOnnxBytes = 63_201_294;
+    private const long EnJsonBytes = 4_882;
+    private const long DeJsonBytes = 4_819;
+    private const string EnOnnxSha256 = "b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18";
+    private const string DeOnnxSha256 = "7e64762d8e5118bb578f2eea6207e1a35a8e0c30595010b666f983fc87bb7819";
+    private const string EnJsonSha256 = "95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77";
+    private const string DeJsonSha256 = "974adee790533adb273a1ac88f49027d2a1b8f0f2cf4905954a4791e79264e85";
 
     private const string EnVoiceLabel = "English (Amy, medium)";
     private const string DeVoiceLabel = "Deutsch (Thorsten, medium)";
@@ -129,10 +142,12 @@ public static class PiperInstaller
                 await DownloadPiperBinaryAsync(onProgress);
 
             if (!IsEnVoicePresent)
-                await DownloadVoiceAsync(EnVoiceLabel, EnOnnxUrl, EnJsonUrl, EnVoicePath, onProgress);
+                await DownloadVoiceAsync(EnVoiceLabel, EnOnnxUrl, EnJsonUrl, EnVoicePath,
+                    EnOnnxBytes, EnOnnxSha256, EnJsonBytes, EnJsonSha256, onProgress);
 
             if (!IsDeVoicePresent)
-                await DownloadVoiceAsync(DeVoiceLabel, DeOnnxUrl, DeJsonUrl, DeVoicePath, onProgress);
+                await DownloadVoiceAsync(DeVoiceLabel, DeOnnxUrl, DeJsonUrl, DeVoicePath,
+                    DeOnnxBytes, DeOnnxSha256, DeJsonBytes, DeJsonSha256, onProgress);
 
             if (IsFullyInstalled)
             {
@@ -156,60 +171,22 @@ public static class PiperInstaller
         onProgress?.Invoke("Downloading Piper binary (~25 MB)...");
         AppLog.Info($"Downloading Piper binary from {PiperZipUrl}");
 
-        var zipPath = Path.Combine(PiperDir, "piper-download.zip");
-        using (var response = await _http.GetAsync(PiperZipUrl, HttpCompletionOption.ResponseHeadersRead))
-        {
-            response.EnsureSuccessStatusCode();
-            using var fs = File.Create(zipPath);
-            await response.Content.CopyToAsync(fs);
-        }
-
-        onProgress?.Invoke("Extracting Piper binary...");
-
-        var tempExtract = Path.Combine(PiperDir, "extract-temp");
-        if (Directory.Exists(tempExtract))
-            Directory.Delete(tempExtract, true);
-        ZipFile.ExtractToDirectory(zipPath, tempExtract);
-
-        // Piper's zip extracts to a "piper/" subfolder; flatten its contents directly into PiperDir.
-        var piperSubdir = Path.Combine(tempExtract, "piper");
-        var sourceDir = Directory.Exists(piperSubdir) ? piperSubdir : tempExtract;
-
-        foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
-        {
-            var relative = Path.GetRelativePath(sourceDir, file);
-            var dest = Path.Combine(PiperDir, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            File.Copy(file, dest, overwrite: true);
-        }
-
-        try { Directory.Delete(tempExtract, true); } catch { }
-        try { File.Delete(zipPath); } catch { }
-
-        if (!File.Exists(PiperExe))
-            throw new FileNotFoundException($"Piper extraction completed but {PiperExe} not found");
+        await DownloadPiperRuntimeAsync(TtsRoot, _http, PiperZipUrl, PiperArchiveBytes, PiperArchiveSha256,
+            System.Threading.CancellationToken.None, TimeSpan.FromMinutes(30),
+            () => onProgress?.Invoke("Extracting Piper binary..."));
 
         AppLog.Info($"Piper binary installed at {PiperExe}");
     }
 
-    private static async Task DownloadVoiceAsync(string label, string onnxUrl, string jsonUrl, string onnxPath, Action<string> onProgress)
+    private static async Task DownloadVoiceAsync(string label, string onnxUrl, string jsonUrl, string onnxPath,
+        long onnxBytes, string onnxSha256, long jsonBytes, string jsonSha256, Action<string> onProgress)
     {
         onProgress?.Invoke($"Downloading voice: {label} (~63 MB)...");
         AppLog.Info($"Downloading Piper voice {label} from {onnxUrl}");
 
-        using (var response = await _http.GetAsync(onnxUrl, HttpCompletionOption.ResponseHeadersRead))
-        {
-            response.EnsureSuccessStatusCode();
-            using var fs = File.Create(onnxPath);
-            await response.Content.CopyToAsync(fs);
-        }
-
-        using (var response = await _http.GetAsync(jsonUrl))
-        {
-            response.EnsureSuccessStatusCode();
-            using var fs = File.Create(onnxPath + ".json");
-            await response.Content.CopyToAsync(fs);
-        }
+        await DownloadVoiceAsync(onnxPath, _http, onnxUrl, jsonUrl,
+            onnxBytes, onnxSha256, jsonBytes, jsonSha256,
+            System.Threading.CancellationToken.None, TimeSpan.FromMinutes(30));
 
         AppLog.Info($"Piper voice installed: {onnxPath}");
     }

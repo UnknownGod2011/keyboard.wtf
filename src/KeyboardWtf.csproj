@@ -3,14 +3,16 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <Nullable>disable</Nullable>
     <RootNamespace>KeyboardWtf</RootNamespace>
     <AssemblyName>keyboard.wtf</AssemblyName>
-    <Version>1.2.0</Version>
-    <FileVersion>1.2.0.0</FileVersion>
-    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <Version>1.4.21</Version>
+    <FileVersion>1.4.21.0</FileVersion>
+    <AssemblyVersion>1.4.21.0</AssemblyVersion>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationIcon />
@@ -22,8 +24,45 @@
     <OutputPath>$(BaseOutputPath)$(Configuration)\bin\</OutputPath>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(KeyboardWtfPaidProduction)' == 'true'">
+    <DefineConstants>$(DefineConstants);KEYBOARD_WTF_PAID_PRODUCTION</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(KeyboardWtfPaidProductionCandidate)' == 'true'">
+    <DefineConstants>$(DefineConstants);KEYBOARD_WTF_PAID_PRODUCTION;KEYBOARD_WTF_PAID_PRODUCTION_CANDIDATE</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(KeyboardWtfPersonalApiCandidate)' == 'true'">
+    <DefineConstants>$(DefineConstants);KEYBOARD_WTF_PAID_PRODUCTION;KEYBOARD_WTF_PAID_PRODUCTION_CANDIDATE;KEYBOARD_WTF_PERSONAL_API_CANDIDATE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(KeyboardWtfPaidProduction)' == 'true' And '$(KeyboardWtfPaidProductionCandidate)' != 'true' And '$(KeyboardWtfPersonalApiCandidate)' != 'true'">
+    <Compile Remove="Services\PrivatePersonalRecordingInput.cs" />
+    <Compile Remove="Services\PersonalAudioIngressDiagnostics.cs" />
+    <Content Include="..\LICENSE">
+      <Link>LICENSE</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+    <Content Include="..\NOTICES.md">
+      <Link>NOTICES.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Resources\web\settings.html" LogicalName="web/settings.html" />
+    <EmbeddedResource Include="Resources\web\browser-automation-fixture.html" LogicalName="web/browser-automation-fixture.html" />
+    <!-- One canonical Luma engine; no playground/demo controls or profile files. -->
+    <EmbeddedResource Include="..\production\site\luma\*.js" LogicalName="web/luma/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\production\site\luma\*.css" LogicalName="web/luma/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\production\site\luma\assets\spritesheet.webp" LogicalName="web/luma/assets/spritesheet.webp" />
+    <EmbeddedResource Include="..\production\site\luma\assets\santa-hat-realistic.png" LogicalName="web/luma/assets/santa-hat-realistic.png" />
+    <EmbeddedResource Include="..\production\site\luma\assets\HAT-GENERATION.md" LogicalName="web/luma/assets/HAT-GENERATION.md" />
+    <EmbeddedResource Include="..\production\site\luma\licenses\react-bits.md" LogicalName="web/luma/licenses/react-bits.md" />
     <EmbeddedResource Include="Resources\icons\actions\*.svg" LogicalName="icons/actions/%(Filename)%(Extension)" />
     <EmbeddedResource Include="Resources\icons\modes\*.svg" LogicalName="icons/modes/%(Filename)%(Extension)" />
   </ItemGroup>
@@ -32,6 +71,38 @@
     <Content Include="package\tts\voices\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>tts\voices\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\manifest.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\manifest.json</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\service-worker.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\service-worker.js</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\content-script.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\content-script.js</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\popup.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\popup.html</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\popup.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\popup.css</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\popup.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\popup.js</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\README.md</Link>
+    </Content>
+    <Content Include="..\extensions\keyboard-wtf-browser-helper-v2\icons\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>browser-helper\icons\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Content>
   </ItemGroup>
 
