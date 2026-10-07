@@ -135,12 +135,12 @@ public sealed class UpdateSecurityTests
 
         // Verify the exact prepared, accepted public artifact. Publication is a
         // separate gate; the old 1.4.17 fixture must not stand in for these bytes.
-        Assert.Equal(new Version(1, 4, 20), update.Version);
+        Assert.Equal(new Version(1, 4, 21), update.Version);
         Assert.Equal(new Version(1, 4, 17), update.MinimumVersion);
         Assert.Equal(
-            "48141d6f55930ffb0eb29643ac2bc5accf4e67031cf8283b327ff70f40393c50",
+            "45c2e2d08444de1a9293bb7fe116c665697e1054c3d236a9f6616204a0b3d412",
             update.Sha256);
-        Assert.Equal(84_410_622, update.SizeBytes);
+        Assert.Equal(89_451_689, update.SizeBytes);
         Assert.Equal(UpdateManifestVerifier.CurrentKeyId, update.KeyId);
 
         // Keep the new upgrade fence tested rather than weakening it to make
