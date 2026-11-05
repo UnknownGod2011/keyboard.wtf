@@ -1,0 +1,892 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:bfdedc18-ee97-4b83-9c89-8da50eec825a",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-05T18:51:44.0473452+00:00",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "keyboard.wtf SBOM generator",
+          "version": "1"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "name": "keyboard.wtf",
+      "version": "1.4.22",
+      "properties": [
+        {
+          "name": "keyboard.wtf:source-commit",
+          "value": "8ace494fe3c009c4280c275528866903d9269a1a"
+        },
+        {
+          "name": "keyboard.wtf:target",
+          "value": "win-x64"
+        },
+        {
+          "name": "keyboard.wtf:packaged-file-count",
+          "value": "24"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "NAudio",
+      "version": "2.2.1",
+      "purl": "pkg:nuget/NAudio@2.2.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Linq.AsyncEnumerable",
+      "version": "10.0.2",
+      "purl": "pkg:nuget/System.Linq.AsyncEnumerable@10.0.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Diagnostics.DiagnosticSource",
+      "version": "6.0.2",
+      "purl": "pkg:nuget/System.Diagnostics.DiagnosticSource@6.0.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Collections.Immutable",
+      "version": "8.0.0",
+      "purl": "pkg:nuget/System.Collections.Immutable@8.0.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.CodeDom",
+      "version": "7.0.0",
+      "purl": "pkg:nuget/System.CodeDom@7.0.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Newtonsoft.Json",
+      "version": "13.0.4",
+      "purl": "pkg:nuget/Newtonsoft.Json@13.0.4"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.Extensions.Logging.Abstractions",
+      "version": "6.0.0",
+      "purl": "pkg:nuget/Microsoft.Extensions.Logging.Abstractions@6.0.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.Extensions.DependencyInjection.Abstractions",
+      "version": "6.0.0",
+      "purl": "pkg:nuget/Microsoft.Extensions.DependencyInjection.Abstractions@6.0.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.Bcl.AsyncInterfaces",
+      "version": "10.0.6",
+      "purl": "pkg:nuget/Microsoft.Bcl.AsyncInterfaces@10.0.6"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Grpc.Net.Common",
+      "version": "2.71.0",
+      "purl": "pkg:nuget/Grpc.Net.Common@2.71.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Grpc.Net.Client",
+      "version": "2.71.0",
+      "purl": "pkg:nuget/Grpc.Net.Client@2.71.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Grpc.Core.Api",
+      "version": "2.71.0",
+      "purl": "pkg:nuget/Grpc.Core.Api@2.71.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Grpc.Auth",
+      "version": "2.71.0",
+      "purl": "pkg:nuget/Grpc.Auth@2.71.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Protobuf",
+      "version": "3.31.1",
+      "purl": "pkg:nuget/Google.Protobuf@3.31.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.LongRunning",
+      "version": "3.5.0",
+      "purl": "pkg:nuget/Google.LongRunning@3.5.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Cloud.Location",
+      "version": "2.4.0",
+      "purl": "pkg:nuget/Google.Cloud.Location@2.4.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Cloud.Firestore.V1",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/Google.Cloud.Firestore.V1@4.3.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Apis.Core",
+      "version": "1.75.0",
+      "purl": "pkg:nuget/Google.Apis.Core@1.75.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Apis",
+      "version": "1.75.0",
+      "purl": "pkg:nuget/Google.Apis@1.75.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Api.Gax.Rest",
+      "version": "4.13.1",
+      "purl": "pkg:nuget/Google.Api.Gax.Rest@4.13.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Management",
+      "version": "7.0.2",
+      "purl": "pkg:nuget/System.Management@7.0.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Api.Gax.Grpc",
+      "version": "4.13.1",
+      "purl": "pkg:nuget/Google.Api.Gax.Grpc@4.13.1"
+    },
+    {
+      "type": "file",
+      "name": "ggml-base-whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e6c362421b6d5a5c1b52341f88d3d72764de29f05141748cc3faad2f6348063f"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "636928"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2e0ac238c2bc178a5c1f09b3bde2421904b191bce1cc1c13dc64309ca3b9cb36"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "67072"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "runtimes/win-x64/whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "07ec2fac4946005ba7380f2c2e9ccfa3ad23007592d074aa698ed5df6bfb4938"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "484864"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "runtimes/win-x64/ggml-whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2e0ac238c2bc178a5c1f09b3bde2421904b191bce1cc1c13dc64309ca3b9cb36"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "67072"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "runtimes/win-x64/ggml-cpu-whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "480a23afc6deea301c5cda66cf462fa2f2eb7ff9bca63b8f4f933a0e8dc5d4dd"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "782848"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "runtimes/win-x64/ggml-base-whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e6c362421b6d5a5c1b52341f88d3d72764de29f05141748cc3faad2f6348063f"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "636928"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/icons/icon-48.png",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d490f56d2525b2c03deb62ee37c7db830f36b3536b17cd7681ae22434854b06e"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "1239"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/icons/icon-32.png",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2648f64d8fa29bb7a5cbc33eddcbce9689725f76c6a79f05f7be099555df1595"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "905"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/icons/icon-16.png",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f740d0d34861afd3a48d67ce56cb780a9391fc386382b3abdc56e1a2222695a7"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "487"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/icons/icon-128.png",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7b04e4170247b396dbe063ee60b2db65abbd51bb2e2e13a1d58c5e58f89c483c"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "3128"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/service-worker.js",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1d362aac8ad0ac798b3e8aea654cbf98192351d7003d08b25ee6418b07ed7de6"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "47313"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/README.md",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b93b2ce824f8efbbfe9656759f3c0ed6c2d8232daee9ff8f4dea6911ddc8a9d0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "1274"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/popup.js",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "69f1a41c2bda83983e1051016cbbc1f0436c9e7facd1a5fa87deb955fe029ff9"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "1243"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/popup.html",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "34e4679ccc998c14e556cf93f9b6ca3479b3bc6c69ca6d7f791ffcf34f8a45d4"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "1543"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/popup.css",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6697543890701920068faf7c687f0e36367c0cfd1420f52c6f4155e530362c41"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "2088"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/manifest.json",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "42acd6626575dfe90597539bb068b67e184c1d58bc012f16b8a163aed1423767"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "1637"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "browser-helper/content-script.js",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4dcf024aa2f00578c5b55fcaa81470164076107a8e0291461ab69ccc7495a01d"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "42046"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "07ec2fac4946005ba7380f2c2e9ccfa3ad23007592d074aa698ed5df6bfb4938"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "484864"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "NOTICES.md",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "49d0412a1653aa3fa2ceca07005f1db1ac10aa882794bcfa888f66dfc581cc3e"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "5461"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "LICENSE",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "baacf54a88820ca6a8f85e39640ad68b9ceee4bbad11966706369a10cacae64e"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "1089"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "keyboard.wtf.exe",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "01e3212555ffb430e6ea1bbc39fb8ca6bc10d4dc789a555acc9787f54e418b69"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "321408462"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "ggml-cpu-whisper.dll",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "480a23afc6deea301c5cda66cf462fa2f2eb7ff9bca63b8f4f933a0e8dc5d4dd"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "782848"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "tts/voices/de_DE-thorsten-medium.onnx.json",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "645de72e66b1cda9a043ce43b92f3351c5fd5c6bcfeb0cf2cbc78c06eb270bd3"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "5305"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Api.Gax",
+      "version": "4.13.1",
+      "purl": "pkg:nuget/Google.Api.Gax@4.13.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Cloud.Firestore",
+      "version": "4.3.0",
+      "purl": "pkg:nuget/Google.Cloud.Firestore@4.3.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Drawing.Common",
+      "version": "10.0.5",
+      "purl": "pkg:nuget/System.Drawing.Common@10.0.5"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "OpenCvSharp4.WpfExtensions",
+      "version": "4.13.0.20260602",
+      "purl": "pkg:nuget/OpenCvSharp4.WpfExtensions@4.13.0.20260602"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "OpenCvSharp4.runtime.win",
+      "version": "4.13.0.20260602",
+      "purl": "pkg:nuget/OpenCvSharp4.runtime.win@4.13.0.20260602"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "OpenCvSharp4",
+      "version": "4.13.0.20260602",
+      "purl": "pkg:nuget/OpenCvSharp4@4.13.0.20260602"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "NAudio.WinMM",
+      "version": "2.2.1",
+      "purl": "pkg:nuget/NAudio.WinMM@2.2.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "NAudio.WinForms",
+      "version": "2.2.1",
+      "purl": "pkg:nuget/NAudio.WinForms@2.2.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "NAudio.Wasapi",
+      "version": "2.2.1",
+      "purl": "pkg:nuget/NAudio.Wasapi@2.2.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "NAudio.Midi",
+      "version": "2.2.1",
+      "purl": "pkg:nuget/NAudio.Midi@2.2.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "NAudio.Core",
+      "version": "2.2.1",
+      "purl": "pkg:nuget/NAudio.Core@2.2.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "NAudio.Asio",
+      "version": "2.2.1",
+      "purl": "pkg:nuget/NAudio.Asio@2.2.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.Win32.SystemEvents",
+      "version": "10.0.5",
+      "purl": "pkg:nuget/Microsoft.Win32.SystemEvents@10.0.5"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.Win32.Registry",
+      "version": "4.7.0",
+      "purl": "pkg:nuget/Microsoft.Win32.Registry@4.7.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.NETCore.Platforms",
+      "version": "3.1.0",
+      "purl": "pkg:nuget/Microsoft.NETCore.Platforms@3.1.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.Extensions.AI.Abstractions",
+      "version": "10.2.0",
+      "purl": "pkg:nuget/Microsoft.Extensions.AI.Abstractions@10.2.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Whisper.net.Runtime",
+      "version": "1.9.1",
+      "purl": "pkg:nuget/Whisper.net.Runtime@1.9.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Whisper.net",
+      "version": "1.9.1",
+      "purl": "pkg:nuget/Whisper.net@1.9.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Vosk",
+      "version": "0.3.38",
+      "purl": "pkg:nuget/Vosk@0.3.38"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Security.Cryptography.ProtectedData",
+      "version": "8.0.0",
+      "purl": "pkg:nuget/System.Security.Cryptography.ProtectedData@8.0.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "OpenCvSharp4.Windows",
+      "version": "4.13.0.20260602",
+      "purl": "pkg:nuget/OpenCvSharp4.Windows@4.13.0.20260602"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.IO.Pipelines",
+      "version": "10.0.2",
+      "purl": "pkg:nuget/System.IO.Pipelines@10.0.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Api.CommonProtos",
+      "version": "2.17.0",
+      "purl": "pkg:nuget/Google.Api.CommonProtos@2.17.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Memory",
+      "version": "4.6.3",
+      "purl": "pkg:nuget/System.Memory@4.6.3"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Security.Principal.Windows",
+      "version": "4.7.0",
+      "purl": "pkg:nuget/System.Security.Principal.Windows@4.7.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Google.Apis.Auth",
+      "version": "1.75.0",
+      "purl": "pkg:nuget/Google.Apis.Auth@1.75.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "FirebaseAdmin",
+      "version": "3.6.0",
+      "purl": "pkg:nuget/FirebaseAdmin@3.6.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit.extensibility.execution",
+      "version": "2.9.2",
+      "purl": "pkg:nuget/xunit.extensibility.execution@2.9.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit.extensibility.core",
+      "version": "2.9.2",
+      "purl": "pkg:nuget/xunit.extensibility.core@2.9.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit.core",
+      "version": "2.9.2",
+      "purl": "pkg:nuget/xunit.core@2.9.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit.assert",
+      "version": "2.9.2",
+      "purl": "pkg:nuget/xunit.assert@2.9.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit.analyzers",
+      "version": "1.16.0",
+      "purl": "pkg:nuget/xunit.analyzers@1.16.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit.abstractions",
+      "version": "2.0.3",
+      "purl": "pkg:nuget/xunit.abstractions@2.0.3"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Reflection.Metadata",
+      "version": "1.6.0",
+      "purl": "pkg:nuget/System.Reflection.Metadata@1.6.0"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Newtonsoft.Json",
+      "version": "13.0.1",
+      "purl": "pkg:nuget/Newtonsoft.Json@13.0.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.TestPlatform.TestHost",
+      "version": "17.11.1",
+      "purl": "pkg:nuget/Microsoft.TestPlatform.TestHost@17.11.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.TestPlatform.ObjectModel",
+      "version": "17.11.1",
+      "purl": "pkg:nuget/Microsoft.TestPlatform.ObjectModel@17.11.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.CodeCoverage",
+      "version": "17.11.1",
+      "purl": "pkg:nuget/Microsoft.CodeCoverage@17.11.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit.runner.visualstudio",
+      "version": "2.8.2",
+      "purl": "pkg:nuget/xunit.runner.visualstudio@2.8.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "xunit",
+      "version": "2.9.2",
+      "purl": "pkg:nuget/xunit@2.9.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Microsoft.NET.Test.Sdk",
+      "version": "17.11.1",
+      "purl": "pkg:nuget/Microsoft.NET.Test.Sdk@17.11.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "Whisper.net.Runtime.Metal",
+      "version": "1.9.1",
+      "purl": "pkg:nuget/Whisper.net.Runtime.Metal@1.9.1"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Text.Json",
+      "version": "10.0.2",
+      "purl": "pkg:nuget/System.Text.Json@10.0.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Text.Encodings.Web",
+      "version": "10.0.2",
+      "purl": "pkg:nuget/System.Text.Encodings.Web@10.0.2"
+    },
+    {
+      "type": "library",
+      "group": "nuget",
+      "name": "System.Security.AccessControl",
+      "version": "4.7.0",
+      "purl": "pkg:nuget/System.Security.AccessControl@4.7.0"
+    },
+    {
+      "type": "file",
+      "name": "tts/voices/en_US-amy-medium.onnx.json",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a1bb2e6354e1279bd0869c492e55bc7e9d22f76bf2b53f9fcf44ce62134e112e"
+        }
+      ],
+      "properties": [
+        {
+          "name": "keyboard.wtf:file-size",
+          "value": "5374"
+        }
+      ]
+    }
+  ]
+}

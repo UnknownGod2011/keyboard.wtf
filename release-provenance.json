@@ -1,0 +1,8 @@
+{
+  "sourceCommit": "8ace494fe3c009c4280c275528866903d9269a1a",
+  "version": "1.4.22",
+  "buildDateUtc": "2026-11-05T17:15:30.0939755Z",
+  "installer": "keyboard-wtf-setup.exe",
+  "installerSha256": "c10c4c00df47f819fba96f64ae1687f92e74b2d56da116cfb1aa8a74903e4223",
+  "signingKeyId": "kwt-release-2026-01"
+}

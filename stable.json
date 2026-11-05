@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "version": "1.4.22",
+  "minimumVersion": "1.4.21",
+  "publishedAt": "2026-11-05T18:58:28.4224839+00:00",
+  "packageUrl": "https://github.com/UnknownGod2011/keyboard.wtf/releases/download/v1.4.22/keyboard-wtf-setup.exe",
+  "sha256": "c10c4c00df47f819fba96f64ae1687f92e74b2d56da116cfb1aa8a74903e4223",
+  "sizeBytes": 89638905,
+  "releaseNotes": "# keyboard.wtf 1.4.22 for Windows\n\n- Handles spoken follow-ups and positional Chrome tab requests more reliably.\n- Translates longer selections with progress and copies the complete result to the clipboard.\n- Shows progress during longer tasks and better matches app names when closing windows.\n\nUse the regular Windows x64 installer for an in-place upgrade that preserves settings. This installer is unsigned, so Windows may show an unknown-publisher warning. Updates use the normal installer.\n\nPublic connectors will become available after production authorization. Chrome Helper is installed separately through the Chrome Web Store.\n",
+  "keyId": "kwt-release-2026-01",
+  "signature": "o6m3bkQYzvcp/IZ8aIfyLi90iycpl9paZLUBEqwfAiLXV6O8gejhfb2FtJcajsTnH7Y3OzOFHQptcE61BgQb5Q=="
+}
